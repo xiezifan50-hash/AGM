@@ -111,11 +111,16 @@ def empty_next_sprint_seed() -> dict[str, Any]:
     }
 
 
-def build_initial_manifest(task_id: str, user_request: str) -> dict[str, Any]:
+def build_initial_manifest(
+    task_id: str,
+    user_request: str,
+    project_workspace: str | None = None,
+) -> dict[str, Any]:
     timestamp = now_iso()
     return {
         "task_id": task_id,
         "user_request": user_request,
+        "project_workspace": project_workspace,
         "latest_sprint": 1,
         "latest_file": f"runs/{task_id}/sprint-001.json",
         "status": STATUS_IN_PROGRESS,

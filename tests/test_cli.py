@@ -24,7 +24,15 @@ class CliTests(WorkspaceTestCase):
             task_command="create",
             user_request="实现核心功能",
             task_id="task-123",
+            workspace="project-space",
         )
         rc = dispatch(create_args, self.workspace, storage, config)
         self.assertEqual(rc, 0)
         self.assertTrue((self.workspace / "runs" / "task-123" / "manifest.json").exists())
+
+        stop_args = Namespace(command="stop", task_id="task-123")
+        rc = dispatch(stop_args, self.workspace, storage, config)
+        self.assertEqual(rc, 0)
+        manifest = storage.load_manifest("task-123")
+        self.assertEqual(manifest["status"], "aborted")
+        self.assertTrue(manifest["project_workspace"].endswith("project-space"))

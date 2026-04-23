@@ -1,0 +1,1206 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>猫城执政记：王座初试</title>
+  <style>
+    :root {
+      --bg-0: #faf6ee;
+      --bg-1: #f2e7d4;
+      --ink: #2a2118;
+      --muted: #6d5a49;
+      --panel: #fffaf2;
+      --line: #d6c4ab;
+      --brand: #b66b2f;
+      --brand-strong: #965421;
+      --ok: #2f7d4a;
+      --warn: #9b4a27;
+      --danger: #96292a;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 600px at 15% -20%, #fff9ef 0%, transparent 62%),
+        radial-gradient(1000px 520px at 90% 100%, #f7ead9 0%, transparent 65%),
+        linear-gradient(165deg, var(--bg-0), var(--bg-1));
+    }
+    .wrap {
+      width: min(1080px, 100%);
+      margin: 0 auto;
+      padding: 16px;
+      display: grid;
+      gap: 12px;
+      grid-template-columns: 1fr 1fr;
+      grid-template-areas:
+        "hero hero"
+        "state actions"
+        "log log";
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: 0 10px 28px rgba(74, 46, 21, 0.08);
+    }
+    .hero {
+      grid-area: hero;
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+    }
+    .hero h1 {
+      margin: 0;
+      font-size: clamp(22px, 3vw, 34px);
+      letter-spacing: 0.02em;
+    }
+    .hero p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .chip {
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .state {
+      grid-area: state;
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+      min-width: 0;
+    }
+    .state h2,
+    .actions h2,
+    .log h2 {
+      margin: 0;
+      font-size: 18px;
+    }
+    .resource-list {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .resource-item {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      padding: 10px;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .resource-item span {
+      color: var(--muted);
+    }
+    .resource-item strong {
+      color: var(--ink);
+      font-variant-numeric: tabular-nums;
+    }
+    .building-list {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .building-item {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      padding: 5px 10px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .building-item.on {
+      border-color: #96c6a4;
+      color: #2d6c40;
+      background: #f4fff7;
+    }
+    .actions {
+      grid-area: actions;
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+      min-width: 0;
+    }
+    .subhead {
+      margin: 2px 0 0;
+      font-size: 14px;
+      color: var(--brand-strong);
+    }
+    .helper {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .btn-grid {
+      display: grid;
+      gap: 8px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    button {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+      text-align: left;
+      background: #fff;
+      color: var(--ink);
+      cursor: pointer;
+      line-height: 1.4;
+      min-height: 72px;
+    }
+    button:hover:not(:disabled) {
+      border-color: var(--brand);
+      background: #fff8f0;
+    }
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.65;
+    }
+    .primary {
+      background: linear-gradient(180deg, #fce0bf, #f7cd9c);
+      border-color: #d08b4f;
+      font-weight: 700;
+    }
+    .log {
+      grid-area: log;
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+      min-width: 0;
+    }
+    .status {
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: #fff;
+      padding: 10px;
+      line-height: 1.6;
+    }
+    .status strong { color: var(--brand-strong); }
+    .status.ok { border-color: #9fd8af; background: #f4fff7; }
+    .status.warn { border-color: #e3bf9f; background: #fff8f1; }
+    .status.danger { border-color: #e3a4a4; background: #fff5f5; }
+    .logs {
+      margin: 0;
+      padding-left: 18px;
+      max-height: 280px;
+      overflow: auto;
+      line-height: 1.6;
+      color: #493a2e;
+    }
+    .foot {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .foot button {
+      min-height: 44px;
+      text-align: center;
+      padding: 10px 12px;
+      flex: 1 1 180px;
+    }
+    @media (max-width: 820px) {
+      .wrap {
+        grid-template-columns: 1fr;
+        grid-template-areas:
+          "hero"
+          "state"
+          "actions"
+          "log";
+      }
+      .btn-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+    @media (max-width: 460px) {
+      .wrap { padding: 10px; }
+      .hero, .state, .actions, .log { padding: 12px; }
+      .resource-list {
+        grid-template-columns: 1fr;
+      }
+      button {
+        min-height: 64px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap board" id="game_surface">
+    <section class="hero card" aria-label="开场信息">
+      <h1>猫城执政记：王座初试</h1>
+      <p>你是新任执政官，在 12 回合内稳住猫国秩序。每回合只能执行一项行动，随后进行结算。若民心、粮仓或工坊崩溃，王都将陷落。</p>
+      <div class="chips">
+        <span class="chip" id="turnChip">回合 1 / 12</span>
+        <span class="chip" id="phaseChip">阶段：等待行动</span>
+        <span class="chip">政绩分数：<strong id="score">0</strong></span>
+        <span class="chip" id="historyChip">已达成结局：0</span>
+        <span class="chip" id="saveChip">存档：未写入</span>
+      </div>
+    </section>
+
+    <section class="state card" aria-label="王国状态">
+      <h2>王国状态</h2>
+      <ul class="resource-list" id="resourceList"></ul>
+      <ul class="building-list" id="buildingList"></ul>
+      <div class="status" id="statusBox" role="status" aria-live="polite" aria-atomic="true"></div>
+    </section>
+
+    <section class="actions card" aria-label="行动选择" id="controls">
+      <h2>行动与建设</h2>
+      <p class="helper">每回合先执行 1 次行动，再处理 1 个事件抉择。治理行动支持方向键 / WASD 与数字键 1-4。</p>
+      <div class="btn-grid" id="actionGrid"></div>
+      <h3 class="subhead">建设项目（一次性）</h3>
+      <div class="btn-grid" id="buildGrid"></div>
+      <h3 class="subhead">当前事件（每回合二选一）</h3>
+      <div class="status" id="eventBox"></div>
+      <div class="btn-grid" id="eventGrid"></div>
+      <div class="foot">
+        <button id="restartBtn" type="button" class="primary">重新开始</button>
+      </div>
+    </section>
+
+    <section class="log card" aria-label="最近日志">
+      <h2>最近日志</h2>
+      <ol class="logs" id="logList"></ol>
+    </section>
+  </main>
+
+  <script>
+    (function () {
+      const MAX_TURNS = 12;
+      const SAVE_KEY = "catkingdom_save";
+      const SAVE_VERSION = 2;
+      const RESOURCE_LABELS = {
+        food: "鱼粮",
+        workshop: "工坊",
+        morale: "民心",
+        gold: "金币"
+      };
+      const TREND_LABELS = {
+        welfare: "民生倾向",
+        harbor: "港贸倾向",
+        order: "秩序倾向"
+      };
+
+      const ACTIONS = [
+        {
+          id: "farm",
+          name: "扩建鱼田",
+          desc: "鱼粮 +3，金币 -1，民心 +1",
+          apply(state) {
+            state.food += 3;
+            state.gold -= 1;
+            state.morale += 1;
+            state.trends.welfare += 1;
+          }
+        },
+        {
+          id: "workshop",
+          name: "维修工坊",
+          desc: "工坊 +2，金币 -1",
+          apply(state) {
+            state.workshop += 2;
+            state.gold -= 1;
+            state.trends.order += 1;
+          }
+        },
+        {
+          id: "festival",
+          name: "举办晒尾节",
+          desc: "民心 +3，鱼粮 -1，金币 -1",
+          apply(state) {
+            state.morale += 3;
+            state.food -= 1;
+            state.gold -= 1;
+            state.trends.welfare += 1;
+          }
+        },
+        {
+          id: "tax",
+          name: "临时征税",
+          desc: "金币 +3，民心 -2",
+          apply(state) {
+            state.gold += 3;
+            state.morale -= 2;
+            state.trends.order += 1;
+          }
+        }
+      ];
+
+      const BUILDINGS = [
+        {
+          id: "granary",
+          name: "鱼干大粮仓",
+          cost: { food: 2, gold: 2 },
+          effect: "每回合鱼粮维护消耗 -1；低粮恐慌触发线降低。"
+        },
+        {
+          id: "dock",
+          name: "潮汐渔港",
+          cost: { workshop: 2, gold: 2 },
+          effect: "每回合额外鱼粮 +2。"
+        },
+        {
+          id: "mint",
+          name: "铜铃铸币局",
+          cost: { workshop: 1, morale: 1, gold: 1 },
+          effect: "每回合额外金币 +2；民心偏低时会额外流失。"
+        },
+        {
+          id: "watchtower",
+          name: "夜巡瞭望塔",
+          cost: { food: 1, workshop: 1, gold: 2 },
+          effect: "工坊危急时自动修补 +1；国库崩溃阈值放宽。"
+        }
+      ];
+
+      function makeEvent(id, title, text, when, options) {
+        return { id, title, text, when, options };
+      }
+
+      const EVENTS = [
+        makeEvent(
+          "rookie_court",
+          "绒垫议会初审",
+          "三位大臣要求你立刻表态：先稳民生，还是先扩秩序？",
+          (s) => s.turn === 1,
+          [
+            {
+              label: "先稳民生：拨鱼粮做应急配给",
+              result: "民众称赞你重视饭碗，工坊预算被压缩。",
+              apply(s) { s.food += 1; s.morale += 1; s.workshop -= 1; s.trends.welfare += 2; }
+            },
+            {
+              label: "先抓秩序：扩编夜巡队",
+              result: "街面更安稳，但商贩对额外规章不满。",
+              apply(s) { s.workshop += 1; s.morale -= 1; s.trends.order += 2; }
+            }
+          ]
+        ),
+        makeEvent(
+          "alley_rats",
+          "后巷偷粮案",
+          "夜里抓到一队偷粮小猫，司法官等待你的裁决。",
+          (s) => s.turn >= 2 && s.food <= 8,
+          [
+            {
+              label: "以工代赈：罚其修缮鱼仓",
+              result: "短期粮损止住，工坊纪律改善。",
+              apply(s) { s.food += 1; s.workshop += 1; s.trends.order += 1; }
+            },
+            {
+              label: "减刑放归：设立社区食点",
+              result: "猫民情绪回暖，但财政多出一笔开销。",
+              apply(s) { s.morale += 2; s.gold -= 1; s.trends.welfare += 1; }
+            }
+          ]
+        ),
+        makeEvent(
+          "guild_strike",
+          "铁须工匠罢工",
+          "工匠公会要求提高夜班津贴，否则暂停护城器械维护。",
+          (s) => s.turn >= 3 && s.workshop <= 7,
+          [
+            {
+              label: "提高津贴，立即复工",
+              result: "工坊运转恢复，国库压力加大。",
+              apply(s) { s.workshop += 2; s.gold -= 2; s.trends.welfare += 1; }
+            },
+            {
+              label: "引入军需督办，强制排班",
+              result: "产能短期抬升，但民间议论尖锐。",
+              apply(s) { s.workshop += 1; s.morale -= 2; s.trends.order += 2; }
+            }
+          ]
+        ),
+        makeEvent(
+          "moon_festival",
+          "银月尾灯节",
+          "祭司提议举办尾灯巡游，可稳定民心但要动用粮仓。",
+          (s) => s.turn >= 4 && s.morale <= 9,
+          [
+            {
+              label: "同意巡游，点亮全城",
+              result: "民心明显上扬，鱼粮被快速消耗。",
+              apply(s) { s.morale += 2; s.food -= 2; s.trends.welfare += 1; }
+            },
+            {
+              label: "改为小规模祈福",
+              result: "节庆效果有限，但保住了后勤。",
+              apply(s) { s.morale += 1; s.food -= 1; s.trends.order += 1; }
+            }
+          ]
+        ),
+        makeEvent(
+          "smuggler_offer",
+          "雾湾走私提案",
+          "灰尾商队愿低价补给，但要求免查三个月。",
+          (s) => s.turn >= 5 && s.gold <= 8,
+          [
+            {
+              label: "接受走私补给",
+              result: "财政暂缓，但法纪权威受损。",
+              apply(s) { s.gold += 3; s.food += 1; s.trends.harbor += 2; s.trends.order -= 1; }
+            },
+            {
+              label: "拒绝交易并公开缉私",
+              result: "秩序与威信提升，眼下现金更紧。",
+              apply(s) { s.gold -= 1; s.morale += 1; s.trends.order += 2; }
+            }
+          ]
+        ),
+        makeEvent(
+          "dock_union",
+          "渔港同盟邀约",
+          "渔港会长提议与外海猫岛组建贸易同盟。",
+          (s) => s.turn >= 6 && s.buildings.dock,
+          [
+            {
+              label: "签署同盟，开放潮汐税",
+              result: "港贸持续升温，王都开始依赖海路。",
+              apply(s) { s.gold += 2; s.food += 1; s.trends.harbor += 2; }
+            },
+            {
+              label: "维持现状，只做季节互市",
+              result: "收益平稳，政治风险较低。",
+              apply(s) { s.gold += 1; s.trends.order += 1; }
+            }
+          ]
+        ),
+        makeEvent(
+          "mint_audit",
+          "铸币局审计",
+          "审计官发现铜铃铸币局存在夜班损耗，建议立即整改。",
+          (s) => s.turn >= 7 && s.buildings.mint,
+          [
+            {
+              label: "发放补贴并更新炉具",
+              result: "铸币效率提升，工匠怨气下降。",
+              apply(s) { s.gold -= 1; s.morale += 1; s.workshop += 1; s.trends.welfare += 1; }
+            },
+            {
+              label: "追责主管并强制达标",
+              result: "账目更好看，但基层紧张升高。",
+              apply(s) { s.gold += 1; s.morale -= 1; s.trends.order += 1; }
+            }
+          ]
+        ),
+        makeEvent(
+          "tower_signal",
+          "瞭望塔烽语",
+          "夜巡传来边境异动，是先加固城防还是派使团安抚？",
+          (s) => s.turn >= 8 && s.buildings.watchtower,
+          [
+            {
+              label: "加固城防并预征军需",
+              result: "工坊投入增长，民间抱怨加税。",
+              apply(s) { s.workshop += 2; s.morale -= 1; s.trends.order += 2; }
+            },
+            {
+              label: "派使团谈判并送礼",
+              result: "紧张局势缓和，国库被迫让利。",
+              apply(s) { s.gold -= 2; s.morale += 2; s.trends.welfare += 1; }
+            }
+          ]
+        ),
+        makeEvent(
+          "drought_week",
+          "七夜少潮",
+          "本周潮汐异常，渔获普遍下降。",
+          (s) => s.turn >= 9,
+          [
+            {
+              label: "启用紧急配给券",
+              result: "粮仓压力可控，民心稳定。",
+              apply(s) { s.food -= 1; s.morale += 1; s.trends.welfare += 1; }
+            },
+            {
+              label: "让市场自由调价",
+              result: "金库存量增加，但平民反弹。",
+              apply(s) { s.gold += 2; s.morale -= 2; s.trends.harbor += 1; }
+            }
+          ]
+        ),
+        makeEvent(
+          "scholar_petition",
+          "学舍联名上书",
+          "年轻学者请求设立“猫须讲堂”，讨论长期治国法。",
+          (s) => s.turn >= 10,
+          [
+            {
+              label: "批准讲堂，鼓励公开辩论",
+              result: "知识社群活跃，治政弹性提高。",
+              apply(s) { s.morale += 1; s.workshop += 1; s.trends.welfare += 1; }
+            },
+            {
+              label: "只保留闭门议事",
+              result: "执行效率更高，但社会活力下降。",
+              apply(s) { s.gold += 1; s.morale -= 1; s.trends.order += 1; }
+            }
+          ]
+        ),
+        makeEvent(
+          "coronation_debate",
+          "加冕前夜辩论",
+          "王都各派要求你公开下一季施政纲领。",
+          (s) => s.turn >= 11,
+          [
+            {
+              label: "宣布“港贸兴邦”",
+              result: "商队欢呼，传统派仍在观望。",
+              apply(s) { s.gold += 2; s.trends.harbor += 2; }
+            },
+            {
+              label: "宣布“稳序厚生”",
+              result: "城防与民政都会增投，财政更吃紧。",
+              apply(s) { s.workshop += 1; s.morale += 1; s.gold -= 1; s.trends.order += 1; s.trends.welfare += 1; }
+            }
+          ]
+        )
+      ];
+
+      const FALLBACK_EVENT = makeEvent(
+        "street_daily",
+        "街巷琐务",
+        "大多数政务官等待你的日常决策。",
+        () => true,
+        [
+          {
+            label: "优先补给民生系统",
+            result: "王都补给线变稳。",
+            apply(s) { s.food += 1; s.trends.welfare += 1; }
+          },
+          {
+            label: "优先补强执法巡逻",
+            result: "街面秩序更可控。",
+            apply(s) { s.workshop += 1; s.trends.order += 1; }
+          }
+        ]
+      );
+
+      const state = createInitialState();
+      let saveStatus = "存档：未写入";
+
+      const turnChip = document.getElementById("turnChip");
+      const phaseChip = document.getElementById("phaseChip");
+      const resourceList = document.getElementById("resourceList");
+      const buildingList = document.getElementById("buildingList");
+      const statusBox = document.getElementById("statusBox");
+      const actionGrid = document.getElementById("actionGrid");
+      const buildGrid = document.getElementById("buildGrid");
+      const eventBox = document.getElementById("eventBox");
+      const eventGrid = document.getElementById("eventGrid");
+      const logList = document.getElementById("logList");
+      const restartBtn = document.getElementById("restartBtn");
+      const scoreEl = document.getElementById("score");
+      const historyChip = document.getElementById("historyChip");
+      const saveChip = document.getElementById("saveChip");
+
+      restartBtn.addEventListener("click", restartGame);
+      window.addEventListener("keydown", onKeyDown);
+
+      bootstrapFromSave();
+      render();
+
+      function bootstrapFromSave() {
+        const loaded = loadState();
+        if (loaded.kind === "ok") {
+          log("已从本地存档恢复进度。", "ok");
+          return;
+        }
+        log("新任执政官到任。每回合先行动，再完成一项事件抉择。");
+        if (loaded.kind === "recovered") {
+          log(loaded.message, "warn");
+        }
+      }
+
+      function createInitialState() {
+        return {
+          turn: 1,
+          phase: "waiting",
+          ended: false,
+          endingType: "",
+          food: 8,
+          workshop: 6,
+          morale: 7,
+          gold: 5,
+          buildings: {
+            granary: false,
+            dock: false,
+            mint: false,
+            watchtower: false
+          },
+          trends: {
+            welfare: 0,
+            harbor: 0,
+            order: 0
+          },
+          seenEvents: {},
+          activeEvent: null,
+          logs: [],
+          endingHistory: []
+        };
+      }
+
+      function renderActions() {
+        actionGrid.innerHTML = "";
+        buildGrid.innerHTML = "";
+        ACTIONS.forEach((action) => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.id = `action-${action.id}`;
+          btn.innerHTML = `<strong>${action.name}</strong><br><span>${action.desc}</span>`;
+          btn.addEventListener("click", () => runTurn(action.id));
+          btn.disabled = state.ended || state.phase !== "waiting";
+          actionGrid.appendChild(btn);
+        });
+        BUILDINGS.forEach((project) => {
+          const btn = document.createElement("button");
+          const built = Boolean(state.buildings[project.id]);
+          btn.type = "button";
+          btn.id = `build-${project.id}`;
+          btn.innerHTML = `<strong>${project.name}${built ? "（已建）" : ""}</strong><br><span>成本：${formatCost(project.cost)}；效果：${project.effect}</span>`;
+          btn.addEventListener("click", () => runTurn(project.id));
+          btn.disabled = state.ended || built || state.phase !== "waiting";
+          buildGrid.appendChild(btn);
+        });
+      }
+
+      function renderEventArea() {
+        eventGrid.innerHTML = "";
+        if (state.ended) {
+          eventBox.innerHTML = "<strong>终局已确定，本回合事件链结束。</strong>";
+          return;
+        }
+        if (!state.activeEvent) {
+          eventBox.innerHTML = "<strong>等待行动后触发事件。</strong>";
+          return;
+        }
+
+        const evt = state.activeEvent;
+        eventBox.innerHTML = `<strong>${evt.title}</strong><br><span>${evt.text}</span>`;
+        evt.options.forEach((option, idx) => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.id = `event-option-${idx + 1}`;
+          btn.innerHTML = `<strong>${idx + 1}. ${option.label}</strong><br><span>将影响资源与结局倾向</span>`;
+          btn.addEventListener("click", () => resolveEventOption(idx));
+          btn.disabled = state.phase !== "event" || state.ended;
+          eventGrid.appendChild(btn);
+        });
+      }
+
+      function runTurn(actionId) {
+        if (state.ended) {
+          log("本局已结束，请点击“重新开始”。");
+          render();
+          return;
+        }
+        if (state.phase !== "waiting") {
+          log("当前不在行动阶段。请先完成当前事件。", "warn");
+          render();
+          return;
+        }
+
+        const action = ACTIONS.find((item) => item.id === actionId);
+        const project = BUILDINGS.find((item) => item.id === actionId);
+        if (!action && !project) {
+          log("无效行动。", "warn");
+          render();
+          return;
+        }
+
+        state.phase = "acting";
+        if (action) {
+          action.apply(state);
+          log(`第 ${state.turn} 回合行动：${action.name}。`);
+        } else {
+          const built = tryBuild(project);
+          if (!built) {
+            state.phase = "waiting";
+            render();
+            return;
+          }
+          log(`第 ${state.turn} 回合建设：${project.name}。`);
+        }
+
+        settleTurn();
+        checkEnding();
+        if (state.ended) {
+          state.phase = "ended";
+          render();
+          return;
+        }
+
+        triggerEvent();
+        state.phase = "event";
+        render();
+      }
+
+      function triggerEvent() {
+        const candidates = EVENTS.filter((evt) => !state.seenEvents[evt.id] && evt.when(state));
+        const picked = candidates.length ? candidates[0] : FALLBACK_EVENT;
+        state.activeEvent = picked;
+        if (picked !== FALLBACK_EVENT) {
+          state.seenEvents[picked.id] = true;
+        }
+        log(`事件触发：${picked.title}。请选择方案。`);
+      }
+
+      function resolveEventOption(index) {
+        if (state.phase !== "event" || !state.activeEvent || state.ended) {
+          return;
+        }
+        const option = state.activeEvent.options[index];
+        if (!option) {
+          log("无效事件选项。", "warn");
+          render();
+          return;
+        }
+        option.apply(state);
+        log(`事件决断：${option.label}。${option.result}`, "ok");
+        state.activeEvent = null;
+
+        checkEnding();
+        if (!state.ended) {
+          state.turn += 1;
+          if (state.turn > MAX_TURNS) {
+            applyFinalEnding();
+          }
+        }
+
+        state.phase = state.ended ? "ended" : "waiting";
+        render();
+      }
+
+      function applyFinalEnding() {
+        state.ended = true;
+        if (state.trends.welfare >= 7 && state.morale >= 8) {
+          state.endingType = "ending_commonwealth";
+          log("终局：猫须议会成立，你以“民生共治”连任。", "ok");
+          return;
+        }
+        if (state.trends.harbor >= 6 && state.gold >= 6) {
+          state.endingType = "ending_tideleague";
+          log("终局：潮汐同盟成形，猫国转为港贸强邦。", "ok");
+          return;
+        }
+        if (state.trends.order >= 7 && state.workshop >= 7) {
+          state.endingType = "ending_ironwall";
+          log("终局：铁爪城防体制确立，王都进入高秩序时代。", "ok");
+          return;
+        }
+        state.endingType = "ending_balanced";
+        log("终局：你在多派系间维持脆弱平衡，猫国平稳续季。", "ok");
+      }
+
+      function onKeyDown(event) {
+        const key = event.key.toLowerCase();
+
+        if (state.ended && (event.key === "Enter" || key === "r")) {
+          event.preventDefault();
+          restartGame();
+          return;
+        }
+
+        if (state.phase === "event") {
+          if (key === "1" || key === "2") {
+            event.preventDefault();
+            resolveEventOption(Number(key) - 1);
+          }
+          return;
+        }
+
+        if (state.ended || state.phase !== "waiting") {
+          return;
+        }
+
+        const keyMap = {
+          "1": "farm",
+          "2": "workshop",
+          "3": "festival",
+          "4": "tax",
+          arrowup: "farm",
+          w: "farm",
+          arrowright: "workshop",
+          d: "workshop",
+          arrowleft: "festival",
+          a: "festival",
+          arrowdown: "tax",
+          s: "tax"
+        };
+        const mapped = keyMap[key];
+        if (!mapped) {
+          return;
+        }
+        event.preventDefault();
+        runTurn(mapped);
+      }
+
+      function tryBuild(project) {
+        if (state.buildings[project.id]) {
+          log(`${project.name}已建成，无需重复建设。`, "warn");
+          return false;
+        }
+        if (!canAfford(project.cost)) {
+          log(`资源不足，无法建设${project.name}。需要 ${formatCost(project.cost)}；当前 ${currentResourceSnapshot()}。`, "warn");
+          return false;
+        }
+        Object.keys(project.cost).forEach((key) => {
+          state[key] -= project.cost[key];
+        });
+        state.buildings[project.id] = true;
+        if (project.id === "dock") {
+          state.trends.harbor += 1;
+        }
+        if (project.id === "watchtower") {
+          state.trends.order += 1;
+        }
+        if (project.id === "granary") {
+          state.trends.welfare += 1;
+        }
+        log(`建成${project.name}，后续结算生效。`, "ok");
+        return true;
+      }
+
+      function canAfford(cost) {
+        return Object.keys(cost).every((key) => state[key] >= cost[key]);
+      }
+
+      function formatCost(cost) {
+        return Object.keys(cost).map((key) => `${RESOURCE_LABELS[key]} ${cost[key]}`).join("、");
+      }
+
+      function currentResourceSnapshot() {
+        return ["food", "workshop", "morale", "gold"].map((key) => `${RESOURCE_LABELS[key]} ${state[key]}`).join("、");
+      }
+
+      function settleTurn() {
+        let upkeepFood = 2;
+        const upkeepGold = 1;
+
+        if (state.buildings.granary) {
+          upkeepFood = 1;
+        }
+
+        state.food -= upkeepFood;
+        state.gold -= upkeepGold;
+
+        if (state.buildings.dock) {
+          state.food += 2;
+          log("潮汐渔港运回鲜鱼：鱼粮 +2。", "ok");
+        }
+
+        if (state.buildings.mint) {
+          state.gold += 2;
+          log("铜铃铸币局当季增收：金币 +2。", "ok");
+          if (state.morale < 4) {
+            state.morale -= 1;
+            log("铸币局夜班压榨工匠：民心 -1。", "warn");
+          }
+        }
+
+        if (state.buildings.watchtower && state.workshop <= 2) {
+          state.workshop += 1;
+          log("夜巡瞭望塔协调修缮：工坊 +1。", "ok");
+        }
+
+        if (state.workshop >= 8) {
+          state.gold += 1;
+          log("工坊产能带来额外税收：金币 +1。", "ok");
+        }
+
+        const panicLine = state.buildings.granary ? 1 : 2;
+        if (state.food <= panicLine) {
+          state.morale -= 1;
+          log(`粮仓紧张，猫民焦躁：民心 -1（阈值 ${panicLine}）。`, "warn");
+        }
+
+        if (state.morale >= 10) {
+          state.food += 1;
+          log("高民心带来互助收成：鱼粮 +1。", "ok");
+        }
+
+        log(`回合结算：鱼粮 -${upkeepFood}，金币 -${upkeepGold}。`);
+      }
+
+      function checkEnding() {
+        if (state.food < 0) {
+          state.ended = true;
+          state.endingType = "defeat_food";
+          log("粮仓断供，王都发生饥乱。", "danger");
+          return;
+        }
+        if (state.workshop < 0) {
+          state.ended = true;
+          state.endingType = "defeat_workshop";
+          log("工坊停摆，城防器械全面失修。", "danger");
+          return;
+        }
+        if (state.morale < 0) {
+          state.ended = true;
+          state.endingType = "defeat_morale";
+          log("民心崩散，贵族议会宣布罢黜执政官。", "danger");
+          return;
+        }
+        const goldCollapseLine = state.buildings.watchtower ? -4 : -2;
+        if (state.gold < goldCollapseLine) {
+          state.ended = true;
+          state.endingType = "defeat_gold";
+          log(`国库透支过深（阈值 ${goldCollapseLine}），债务使王国瓦解。`, "danger");
+        }
+      }
+
+      function restartGame() {
+        const endingHistory = state.endingHistory.slice();
+        const fresh = createInitialState();
+        Object.assign(state, fresh);
+        state.endingHistory = endingHistory;
+        state.logs.length = 0;
+        log("新局已开始。目标：12 回合后完成事件链并守住王国。", "ok");
+        render();
+      }
+
+      function log(text, level) {
+        state.logs.unshift({ text, level: level || "normal" });
+        if (state.logs.length > 14) {
+          state.logs = state.logs.slice(0, 14);
+        }
+      }
+
+      function getStatusMeta() {
+        if (state.ended) {
+          if (state.endingType.indexOf("ending_") === 0) {
+            return { cls: "ok", text: "终局：执政周期完成。可点击“重新开始”体验其他结局。" };
+          }
+          return { cls: "danger", text: "终局：王国失守。可点击“重新开始”重试。" };
+        }
+        if (state.phase === "event") {
+          return { cls: "warn", text: `第 ${state.turn} 回合事件处理中：请选择 1 或 2。` };
+        }
+        return { cls: "warn", text: `进行中：请在第 ${state.turn} 回合选择一项行动。` };
+      }
+
+      function render() {
+        turnChip.textContent = `回合 ${Math.min(state.turn, MAX_TURNS)} / ${MAX_TURNS}`;
+        const phaseLabel = state.ended
+          ? "终局"
+          : state.phase === "waiting"
+          ? "等待行动"
+          : state.phase === "event"
+          ? "事件抉择"
+          : "结算";
+        phaseChip.textContent = `阶段：${phaseLabel}`;
+        historyChip.textContent = `已达成结局：${state.endingHistory.length}`;
+        saveChip.textContent = saveStatus;
+
+        resourceList.innerHTML = [
+          ["鱼粮", state.food],
+          ["工坊", state.workshop],
+          ["民心", state.morale],
+          ["金币", state.gold],
+          [TREND_LABELS.welfare, state.trends.welfare],
+          [TREND_LABELS.harbor, state.trends.harbor],
+          [TREND_LABELS.order, state.trends.order]
+        ].map(([name, value]) => `<li class="resource-item"><span>${name}</span><strong>${value}</strong></li>`).join("");
+
+        buildingList.innerHTML = BUILDINGS.map((project) => {
+          const built = state.buildings[project.id];
+          return `<li class="building-item ${built ? "on" : ""}">${project.name}${built ? "：已建成" : "：未建设"}</li>`;
+        }).join("");
+
+        const statusMeta = getStatusMeta();
+        statusBox.className = `status ${statusMeta.cls}`;
+        statusBox.innerHTML = `<strong>${statusMeta.text}</strong>`;
+
+        renderActions();
+        renderEventArea();
+        scoreEl.textContent = String(calcScore());
+        logList.innerHTML = state.logs.map((entry) => `<li>${entry.text}</li>`).join("");
+        persistState();
+      }
+
+      function calcScore() {
+        const base = state.food + state.workshop + state.morale + state.gold;
+        const trendBonus = state.trends.welfare + state.trends.harbor + state.trends.order;
+        const progress = Math.min(state.turn - 1, MAX_TURNS) * 2;
+        return Math.max(0, base + trendBonus + progress);
+      }
+
+      function persistState() {
+        try {
+          localStorage.setItem(
+            SAVE_KEY,
+            JSON.stringify({
+              version: SAVE_VERSION,
+              state: exportState()
+            })
+          );
+          saveStatus = "存档：已同步本地";
+        } catch (_error) {
+          saveStatus = "存档：写入失败（可继续游玩）";
+        }
+      }
+
+      function exportState() {
+        return {
+          turn: state.turn,
+          phase: state.phase,
+          ended: state.ended,
+          endingType: state.endingType,
+          food: state.food,
+          workshop: state.workshop,
+          morale: state.morale,
+          gold: state.gold,
+          buildings: { ...state.buildings },
+          trends: { ...state.trends },
+          seenEvents: { ...state.seenEvents },
+          activeEventId: state.activeEvent ? state.activeEvent.id : "",
+          logs: state.logs.map((entry) => ({ text: entry.text, level: entry.level || "normal" })),
+          endingHistory: state.endingHistory.slice(0, 12)
+        };
+      }
+
+      function loadState() {
+        let raw = "";
+        try {
+          raw = localStorage.getItem(SAVE_KEY) || "";
+        } catch (_error) {
+          return { kind: "recovered", message: "无法读取本地存档，已改为新局。你仍可点击“重新开始”。" };
+        }
+        if (!raw) {
+          return { kind: "empty" };
+        }
+
+        let data;
+        try {
+          data = JSON.parse(raw);
+        } catch (_error) {
+          clearSave();
+          return { kind: "recovered", message: "检测到损坏存档，已自动清理并重开新局。" };
+        }
+
+        if (!data || data.version !== SAVE_VERSION || !data.state) {
+          clearSave();
+          return { kind: "recovered", message: `存档版本不兼容（需要 v${SAVE_VERSION}），已自动重开新局。` };
+        }
+
+        const normalized = normalizeState(data.state);
+        if (!normalized) {
+          clearSave();
+          return { kind: "recovered", message: "存档结构无效，已自动重开新局。" };
+        }
+        Object.assign(state, normalized);
+        return { kind: "ok" };
+      }
+
+      function clearSave() {
+        try {
+          localStorage.removeItem(SAVE_KEY);
+        } catch (_error) {
+          return;
+        }
+      }
+
+      function normalizeState(raw) {
+        if (!raw || typeof raw !== "object") {
+          return null;
+        }
+        const next = createInitialState();
+        next.turn = clampInt(raw.turn, 1, MAX_TURNS + 1, 1);
+        next.ended = Boolean(raw.ended);
+        next.endingType = typeof raw.endingType === "string" ? raw.endingType : "";
+        next.food = clampInt(raw.food, -50, 99, next.food);
+        next.workshop = clampInt(raw.workshop, -50, 99, next.workshop);
+        next.morale = clampInt(raw.morale, -50, 99, next.morale);
+        next.gold = clampInt(raw.gold, -50, 99, next.gold);
+
+        if (raw.buildings && typeof raw.buildings === "object") {
+          BUILDINGS.forEach((project) => {
+            next.buildings[project.id] = Boolean(raw.buildings[project.id]);
+          });
+        }
+
+        if (raw.trends && typeof raw.trends === "object") {
+          ["welfare", "harbor", "order"].forEach((key) => {
+            next.trends[key] = clampInt(raw.trends[key], -20, 40, 0);
+          });
+        }
+
+        if (raw.seenEvents && typeof raw.seenEvents === "object") {
+          Object.keys(raw.seenEvents).forEach((id) => {
+            if (raw.seenEvents[id]) {
+              next.seenEvents[id] = true;
+            }
+          });
+        }
+
+        if (Array.isArray(raw.logs)) {
+          next.logs = raw.logs
+            .filter((entry) => entry && typeof entry.text === "string")
+            .slice(0, 14)
+            .map((entry) => ({ text: entry.text, level: typeof entry.level === "string" ? entry.level : "normal" }));
+        }
+
+        if (Array.isArray(raw.endingHistory)) {
+          next.endingHistory = raw.endingHistory
+            .filter((item) => typeof item === "string" && item)
+            .slice(0, 12);
+        }
+
+        const activeEvent = getEventById(typeof raw.activeEventId === "string" ? raw.activeEventId : "");
+        next.activeEvent = activeEvent;
+
+        const phase = typeof raw.phase === "string" ? raw.phase : "waiting";
+        if (next.ended) {
+          next.phase = "ended";
+        } else if (phase === "event" && next.activeEvent) {
+          next.phase = "event";
+        } else {
+          next.phase = "waiting";
+          next.activeEvent = null;
+        }
+        return next;
+      }
+
+      function getEventById(id) {
+        if (!id) {
+          return null;
+        }
+        if (id === FALLBACK_EVENT.id) {
+          return FALLBACK_EVENT;
+        }
+        return EVENTS.find((evt) => evt.id === id) || null;
+      }
+
+      function clampInt(value, min, max, fallback) {
+        const num = Number(value);
+        if (!Number.isFinite(num)) {
+          return fallback;
+        }
+        const rounded = Math.round(num);
+        return Math.max(min, Math.min(max, rounded));
+      }
+    })();
+  </script>
+</body>
+</html>

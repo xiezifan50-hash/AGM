@@ -5,8 +5,10 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Callable
 import json
+import os
 import re
 import subprocess
+import tempfile
 
 from codex_ma.config import ProjectConfig
 from codex_ma.constants import (
@@ -28,6 +30,7 @@ from codex_ma.constants import (
     ROLE_EVALUATOR,
     ROLE_GENERATOR,
     ROLE_REVIEWER,
+    STATUS_ABORTED,
     STATUS_BLOCKED,
     STATUS_CARRY_FORWARD,
     STATUS_DONE,
@@ -51,6 +54,14 @@ from codex_ma.state import (
 from codex_ma.storage import Storage
 
 
+class TaskStopped(RuntimeError):
+    pass
+
+
+class WorkspaceViolation(RunnerError):
+    pass
+
+
 class Orchestrator:
     def __init__(
         self,
@@ -64,6 +75,7 @@ class Orchestrator:
         self.runner = runner
         self.config = config
         self._state_lock = Lock()
+        self._progress_func: Callable[[str], None] | None = None
 
     def init_workspace(self) -> list[str]:
         self.storage.ensure_layout()
@@ -76,13 +88,22 @@ class Orchestrator:
             created.append("multiagent.toml")
         return created
 
-    def create_task(self, user_request: str, task_id: str | None = None) -> dict[str, Any]:
+    def create_task(
+        self,
+        user_request: str,
+        task_id: str | None = None,
+        project_workspace: str | Path | None = None,
+    ) -> dict[str, Any]:
+        if project_workspace is None:
+            raise ValueError("创建任务必须指定项目空间: --workspace <path>")
         self.storage.ensure_layout()
         existing = set(self.storage.list_task_ids())
         task_id = task_id or make_task_id(existing)
         if task_id in existing:
             raise ValueError(f"任务 {task_id} 已存在")
-        manifest = build_initial_manifest(task_id, user_request)
+        workspace = self._resolve_project_workspace(project_workspace)
+        workspace.mkdir(parents=True, exist_ok=True)
+        manifest = build_initial_manifest(task_id, user_request, workspace.as_posix())
         manifest["review_queue_summary"]["max_concurrency"] = self.config.review.max_concurrency
         sprint = build_initial_sprint(task_id, user_request, sprint_number=1)
         self.storage.ensure_task_layout(task_id, sprint_number=1)
@@ -98,57 +119,124 @@ class Orchestrator:
         )
         return {"task_id": task_id, "manifest": manifest, "sprint": sprint}
 
-    def run(self, task_id: str) -> dict[str, Any]:
+    def _resolve_project_workspace(self, project_workspace: str | Path) -> Path:
+        path = Path(project_workspace).expanduser()
+        if not path.is_absolute():
+            path = self.root / path
+        resolved = path.resolve()
+        root = self.root.resolve()
+        if resolved == root or root.is_relative_to(resolved):
+            raise ValueError("项目空间不能是 codex-ma 工具仓库本身或其父目录")
+        return resolved
+
+    def _project_workspace(self, manifest: dict[str, Any]) -> Path:
+        workspace = manifest.get("project_workspace")
+        if not workspace:
+            raise ValueError("任务未绑定项目空间，不能运行；请使用 task create --workspace <path> 创建新任务")
+        return Path(workspace).expanduser().resolve()
+
+    def run(
+        self,
+        task_id: str,
+        progress_func: Callable[[str], None] | None = None,
+    ) -> dict[str, Any]:
         if self.runner is None:
             raise RunnerError("当前命令需要 runner，但 runner 未初始化")
-        while True:
-            manifest, sprint = self._load_current(task_id)
-            if manifest["status"] in (STATUS_DONE, STATUS_BLOCKED):
-                return {"manifest": manifest, "sprint": sprint}
-            phase = sprint["phase"]
-            if phase == PHASE_INIT:
-                self._transition(task_id, manifest, sprint, PHASE_NEGOTIATE_GENERATOR_RESEARCH, "准备进行 generator 调研。", "generator")
-            elif phase == PHASE_NEGOTIATE_GENERATOR_RESEARCH:
-                self._run_generator_research(task_id, manifest, sprint)
-            elif phase == PHASE_NEGOTIATE_EVALUATOR_RESEARCH:
-                self._run_evaluator_research(task_id, manifest, sprint)
-            elif phase == PHASE_NEGOTIATE_ROUND:
-                self._run_negotiation_round(task_id, manifest, sprint)
-            elif phase == PHASE_CONTRACT_ACCEPTED:
-                self._prepare_implementation(task_id, manifest, sprint)
-            elif phase == PHASE_IMPLEMENTING:
-                self._run_feature_execution(task_id, manifest, sprint)
-            elif phase == PHASE_L1_VERIFY:
-                self._run_l1_verify(task_id, manifest, sprint)
-            elif phase == PHASE_REVIEW_PREP:
-                self._prepare_reviews(task_id, manifest, sprint)
-            elif phase == PHASE_PARALLEL_REVIEW:
-                self._run_parallel_reviews(task_id, manifest, sprint)
-            elif phase == PHASE_REVIEW_AGGREGATE:
-                self._aggregate_reviews(task_id, manifest, sprint)
-            elif phase == PHASE_HOLISTIC_REVIEW:
-                self._run_holistic_review(task_id, manifest, sprint)
-            elif phase == PHASE_NEXT_SPRINT_PREP:
-                self._prepare_next_sprint(task_id, manifest, sprint)
-            elif phase == PHASE_AWAITING_HUMAN:
-                return {"manifest": manifest, "sprint": sprint}
-            elif phase == PHASE_DONE:
-                manifest["status"] = STATUS_DONE
-                self.storage.save_manifest(task_id, manifest)
-                return {"manifest": manifest, "sprint": sprint}
-            else:
-                raise ValueError(f"未知 phase: {phase}")
+        previous_progress = self._progress_func
+        if progress_func is not None:
+            self._progress_func = progress_func
+        try:
+            while True:
+                manifest, sprint = self._load_current(task_id)
+                if manifest["status"] in (STATUS_DONE, STATUS_BLOCKED, STATUS_ABORTED):
+                    return {"manifest": manifest, "sprint": sprint}
+                phase = sprint["phase"]
+                try:
+                    if phase == PHASE_INIT:
+                        self._transition(task_id, manifest, sprint, PHASE_NEGOTIATE_GENERATOR_RESEARCH, "准备进行 generator 调研。", "generator")
+                    elif phase == PHASE_NEGOTIATE_GENERATOR_RESEARCH:
+                        self._run_generator_research(task_id, manifest, sprint)
+                    elif phase == PHASE_NEGOTIATE_EVALUATOR_RESEARCH:
+                        self._run_evaluator_research(task_id, manifest, sprint)
+                    elif phase == PHASE_NEGOTIATE_ROUND:
+                        self._run_negotiation_round(task_id, manifest, sprint)
+                    elif phase == PHASE_CONTRACT_ACCEPTED:
+                        self._prepare_implementation(task_id, manifest, sprint)
+                    elif phase == PHASE_IMPLEMENTING:
+                        self._run_feature_execution(task_id, manifest, sprint)
+                    elif phase == PHASE_L1_VERIFY:
+                        self._run_l1_verify(task_id, manifest, sprint)
+                    elif phase == PHASE_REVIEW_PREP:
+                        self._prepare_reviews(task_id, manifest, sprint)
+                    elif phase == PHASE_PARALLEL_REVIEW:
+                        self._run_parallel_reviews(task_id, manifest, sprint)
+                    elif phase == PHASE_REVIEW_AGGREGATE:
+                        self._aggregate_reviews(task_id, manifest, sprint)
+                    elif phase == PHASE_HOLISTIC_REVIEW:
+                        self._run_holistic_review(task_id, manifest, sprint)
+                    elif phase == PHASE_NEXT_SPRINT_PREP:
+                        self._prepare_next_sprint(task_id, manifest, sprint)
+                    elif phase == PHASE_AWAITING_HUMAN:
+                        return {"manifest": manifest, "sprint": sprint}
+                    elif phase == PHASE_DONE:
+                        manifest["status"] = STATUS_DONE
+                        self.storage.save_manifest(task_id, manifest)
+                        return {"manifest": manifest, "sprint": sprint}
+                    else:
+                        raise ValueError(f"未知 phase: {phase}")
+                except TaskStopped:
+                    manifest, sprint = self._load_current(task_id)
+                    return {"manifest": manifest, "sprint": sprint}
+        finally:
+            self._progress_func = previous_progress
 
     def resume(
         self,
         task_id: str,
         input_func: Callable[[str], str] = input,
         output_func: Callable[[str], None] = print,
+        progress_func: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         manifest, sprint = self._load_current(task_id)
+        if manifest["status"] in (STATUS_DONE, STATUS_BLOCKED, STATUS_ABORTED):
+            return {"manifest": manifest, "sprint": sprint}
         if sprint["phase"] == PHASE_AWAITING_HUMAN:
             self._collect_human_input(task_id, manifest, sprint, input_func, output_func)
-        return self.run(task_id)
+        return self.run(task_id, progress_func=progress_func)
+
+    def stop(self, task_id: str, reason_zh: str = "用户请求停止任务。") -> dict[str, Any]:
+        manifest, sprint = self._load_current(task_id)
+        if manifest["status"] == STATUS_DONE:
+            return {"manifest": manifest, "sprint": sprint}
+        if manifest["status"] == STATUS_ABORTED:
+            return {"manifest": manifest, "sprint": sprint}
+        manifest["status"] = STATUS_ABORTED
+        sprint["status"] = STATUS_ABORTED
+        sprint["resume_from"] = {
+            "phase": sprint["phase"],
+            "pending_actor": None,
+            "reason_zh": "任务已被 stop 指令停止；不会继续自动运行。",
+        }
+        manifest["resume_pointer"] = {
+            "phase": sprint["phase"],
+            "file": f"runs/{task_id}/sprint-{sprint['sprint_number']:03d}.json",
+            "reason_zh": reason_zh,
+        }
+        manifest["human_gate"] = {
+            "active": False,
+            "reason_zh": "",
+            "unresolved_points": [],
+        }
+        self._save_state(task_id, manifest, sprint)
+        self._append_event(
+            task_id,
+            sprint,
+            "TASK_STOPPED",
+            "orchestrator",
+            reason_zh,
+            {"status": STATUS_ABORTED},
+        )
+        return {"manifest": manifest, "sprint": sprint}
 
     def status(self, task_id: str) -> dict[str, Any]:
         manifest, sprint = self._load_current(task_id)
@@ -156,6 +244,33 @@ class Orchestrator:
 
     def events(self, task_id: str) -> list[dict[str, Any]]:
         return self.storage.read_events(task_id)
+
+    def _emit_progress(self, title: str, lines: list[str] | None = None) -> None:
+        if self._progress_func is None:
+            return
+        rendered = [f"\n== {title} =="]
+        rendered.extend(line for line in (lines or []) if line)
+        self._progress_func("\n".join(rendered))
+
+    def _short_text(self, value: Any, limit: int = 180) -> str:
+        text = str(value or "").strip().replace("\n", " ")
+        if len(text) <= limit:
+            return text
+        return text[: limit - 1].rstrip() + "…"
+
+    def _format_items(self, items: list[Any], limit: int = 5) -> str:
+        if not items:
+            return "无"
+        rendered = [self._short_text(item, 80) for item in items[:limit]]
+        suffix = "" if len(items) <= limit else f" 等 {len(items)} 项"
+        return "；".join(rendered) + suffix
+
+    def _feature_title(self, contract: dict[str, Any], feature_id: str) -> str:
+        for feature in contract.get("features_planned", []):
+            if feature.get("feature_id") == feature_id:
+                title = feature.get("title_zh") or feature_id
+                return f"{feature_id}（{title}）"
+        return feature_id
 
     def _load_current(self, task_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
         manifest = self.storage.load_manifest(task_id)
@@ -168,12 +283,67 @@ class Orchestrator:
         manifest: dict[str, Any],
         sprint: dict[str, Any],
     ) -> None:
+        self._raise_if_stopped(task_id, manifest)
         manifest["latest_sprint"] = sprint["sprint_number"]
         manifest["latest_file"] = f"runs/{task_id}/sprint-{sprint['sprint_number']:03d}.json"
         manifest["current_phase"] = sprint["phase"]
         manifest["timestamps"]["updated_at"] = now_iso()
         self.storage.save_sprint(task_id, sprint)
         self.storage.save_manifest(task_id, manifest)
+
+    def _raise_if_stopped(self, task_id: str, manifest: dict[str, Any]) -> None:
+        if manifest.get("status") == STATUS_ABORTED:
+            return
+        current = self.storage.load_manifest(task_id)
+        if current.get("status") == STATUS_ABORTED:
+            raise TaskStopped
+
+    def _workspace_run_dir(self, manifest: dict[str, Any], task_id: str) -> Path:
+        return self._project_workspace(manifest) / ".codex-ma" / "runs" / task_id
+
+    def _workspace_artifact_file(
+        self,
+        task_id: str,
+        manifest: dict[str, Any],
+        sprint: dict[str, Any],
+        filename: str,
+    ) -> Path:
+        path = (
+            self._workspace_run_dir(manifest, task_id)
+            / "artifacts"
+            / f"sprint-{sprint['sprint_number']:03d}"
+            / filename
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _workspace_relative(self, manifest: dict[str, Any], path: Path) -> str:
+        try:
+            return path.relative_to(self._project_workspace(manifest)).as_posix()
+        except ValueError:
+            return path.as_posix()
+
+    def _workspace_schema_file(self, manifest: dict[str, Any], schema_key: str) -> Path:
+        source = self.root / OUTPUT_SCHEMAS[schema_key]
+        workspace = self._project_workspace(manifest)
+        target = workspace / ".codex-ma" / OUTPUT_SCHEMAS[schema_key]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists() and target.read_bytes() == source.read_bytes():
+            return target
+        with tempfile.NamedTemporaryFile("wb", dir=target.parent, delete=False) as handle:
+            handle.write(source.read_bytes())
+            temp_name = handle.name
+        os.replace(temp_name, target)
+        return target
+
+    def _assert_payload_within_workspace(self, manifest: dict[str, Any], payload: dict[str, Any]) -> None:
+        workspace = self._project_workspace(manifest)
+        for raw_path in payload.get("changed_files", []):
+            path = Path(raw_path).expanduser()
+            resolved = path.resolve() if path.is_absolute() else (workspace / path).resolve()
+            if resolved == workspace or workspace in resolved.parents:
+                continue
+            raise WorkspaceViolation(f"changed_files 包含项目空间外路径: {raw_path}")
 
     def _transition(
         self,
@@ -243,13 +413,28 @@ class Orchestrator:
         scope: str,
         notes_zh: str,
     ) -> RunnerResult:
-        schema_path = self.root / OUTPUT_SCHEMAS[schema_key]
-        output_path = self.storage.artifact_file(
+        workspace = self._project_workspace(manifest)
+        schema_path = self._workspace_schema_file(manifest, schema_key)
+        validation_schema_path = self.root / OUTPUT_SCHEMAS[schema_key]
+        output_path = self._workspace_artifact_file(
             task_id,
-            sprint["sprint_number"],
+            manifest,
+            sprint,
             artifact_name,
         )
-        prompt = build_prompt(role, action, context)
+        prompt = build_prompt(
+            role,
+            action,
+            {
+                "workspace_policy": {
+                    "project_workspace": workspace.as_posix(),
+                    "scope_zh": "你只能在 project_workspace 内观察、创建和修改文件；不要读取、引用或修改其父目录或兄弟目录。",
+                    "state_dir_zh": "内部运行产物保存在 project_workspace/.codex-ma 下。",
+                    "readme_policy_zh": "project_workspace 内的 README.md / README.markdown 属于项目文件，可以按任务需要修改；project_workspace 外的 README 或其它文件都不属于你的工作范围。",
+                },
+                **context,
+            },
+        )
         session_info = manifest["agent_sessions"].get(logical_session, {})
         request = RunnerRequest(
             role=role,
@@ -258,13 +443,15 @@ class Orchestrator:
             prompt=prompt,
             schema_path=schema_path,
             output_path=output_path,
-            cwd=self.root,
+            cwd=workspace,
             profile=self.config.profiles[role],
             logical_session=logical_session,
             session_id=session_info.get("session_id"),
         )
         result = self.runner.run(request)
-        validate(result.payload, load_schema(schema_path))
+        self._raise_if_stopped(task_id, manifest)
+        validate(result.payload, load_schema(validation_schema_path))
+        self._assert_payload_within_workspace(manifest, result.payload)
         with self._state_lock:
             manifest["agent_sessions"][logical_session] = {
                 "role": role,
@@ -283,7 +470,7 @@ class Orchestrator:
                 {
                     "action": action,
                     "logical_session": logical_session,
-                    "artifact": self.storage.relative(output_path),
+                    "artifact": self._workspace_relative(manifest, output_path),
                     "command": result.command,
                 },
             )
@@ -313,6 +500,20 @@ class Orchestrator:
             notes_zh="负责合同调研与提案。",
         )
         sprint["contract"]["generator_research"] = result.payload
+        self._emit_progress(
+            "Generator 调研完成",
+            [
+                f"摘要: {self._short_text(result.payload.get('summary_zh'))}",
+                "计划 features: "
+                + self._format_items(
+                    [
+                        f"{item.get('feature_id')} / {item.get('title_zh')}"
+                        for item in result.payload.get("features_planned", [])
+                    ]
+                ),
+                "主要风险: " + self._format_items(result.payload.get("risks_zh", []), limit=3),
+            ],
+        )
         self._save_state(task_id, manifest, sprint)
         self._transition(
             task_id,
@@ -348,6 +549,14 @@ class Orchestrator:
             notes_zh="负责合同调研、协商与 holistic 审批。",
         )
         sprint["contract"]["evaluator_research"] = result.payload
+        self._emit_progress(
+            "Evaluator 调研完成",
+            [
+                f"结论: {'通过' if result.payload.get('pass') else '需协商'}",
+                f"摘要: {self._short_text(result.payload.get('summary_zh'))}",
+                "关注点: " + self._format_items(result.payload.get("issues_zh", []), limit=3),
+            ],
+        )
         self._save_state(task_id, manifest, sprint)
         self._transition(
             task_id,
@@ -467,6 +676,19 @@ class Orchestrator:
         contract["feature_consensus"] = feature_consensus
         contract["global_consensus"] = global_consensus
         contract["unresolved_points"] = unresolved_points
+        self._emit_progress(
+            f"Negotiate 第 {round_number} 轮完成",
+            [
+                f"状态: {round_state['round_status']}",
+                f"Generator 修订: {self._short_text(resolution.get('summary_zh'))}",
+                f"Evaluator 结论: {'通过' if evaluator_resolution.get('pass') else '未通过'} - {self._short_text(evaluator_resolution.get('summary_zh'))}",
+                "未决点: "
+                + self._format_items(
+                    [item.get("title_zh", item.get("point_id", "")) for item in unresolved_points],
+                    limit=4,
+                ),
+            ],
+        )
         if (
             evaluator_resolution["pass"]
             and all(item["pass"] for item in feature_consensus)
@@ -482,6 +704,25 @@ class Orchestrator:
                 "unresolved_points": [],
             }
             self._save_state(task_id, manifest, sprint)
+            self._emit_progress(
+                "合同已接受",
+                [
+                    f"合同摘要: {self._short_text(resolved_contract.get('summary_zh'))}",
+                    "本轮 features: "
+                    + self._format_items(
+                        [
+                            f"{item.get('feature_id')} / {item.get('title_zh')}"
+                            for item in resolved_contract.get("features_planned", [])
+                        ],
+                        limit=8,
+                    ),
+                    "全局验收: "
+                    + self._format_items(
+                        resolved_contract.get("holistic_acceptance_criteria_zh", []),
+                        limit=3,
+                    ),
+                ],
+            )
             self._transition(
                 task_id,
                 manifest,
@@ -504,6 +745,17 @@ class Orchestrator:
                 "unresolved_points": unresolved_points,
             }
             self._save_state(task_id, manifest, sprint)
+            self._emit_progress(
+                "任务阻塞",
+                [
+                    "原因: 人工介入后协商仍未收敛。",
+                    "未决点: "
+                    + self._format_items(
+                        [item.get("title_zh", item.get("point_id", "")) for item in unresolved_points],
+                        limit=5,
+                    ),
+                ],
+            )
             self._append_event(
                 task_id,
                 sprint,
@@ -556,6 +808,17 @@ class Orchestrator:
             "orchestrator",
             "协商未收敛，已打开人工裁决入口。",
             {"unresolved_points": unresolved_points},
+        )
+        self._emit_progress(
+            "等待人工裁决",
+            [
+                "原因: 协商轮次达到上限。",
+                "未决点: "
+                + self._format_items(
+                    [item.get("title_zh", item.get("point_id", "")) for item in unresolved_points],
+                    limit=5,
+                ),
+            ],
         )
 
     def _collect_human_input(
@@ -622,6 +885,19 @@ class Orchestrator:
                 feature["feature_id"] for feature in accepted_contract["features_planned"]
             ]
         self._save_state(task_id, manifest, sprint)
+        self._emit_progress(
+            "实现队列已准备",
+            [
+                "队列: "
+                + self._format_items(
+                    [
+                        self._feature_title(accepted_contract, feature_id)
+                        for feature_id in sprint["implementation"]["feature_queue"]
+                    ],
+                    limit=10,
+                )
+            ],
+        )
         self._transition(
             task_id,
             manifest,
@@ -641,6 +917,13 @@ class Orchestrator:
         accepted_contract = sprint["contract"]["accepted_contract"]
         if implementation["current_feature_id"] is None:
             if not implementation["feature_queue"]:
+                self._emit_progress(
+                    "Feature 实现完成",
+                    [
+                        f"已完成 features: {len(implementation['features'])}",
+                        "下一步: 准备 review。",
+                    ],
+                )
                 self._transition(
                     task_id,
                     manifest,
@@ -689,6 +972,16 @@ class Orchestrator:
             if path not in implementation["changed_files"]:
                 implementation["changed_files"].append(path)
         self._save_state(task_id, manifest, sprint)
+        self._emit_progress(
+            f"Feature 执行完成: {self._feature_title(accepted_contract, feature_id)}",
+            [
+                f"尝试次数: {payload['attempts']}",
+                f"状态: {payload.get('status', 'unknown')}",
+                f"摘要: {self._short_text(payload.get('execution_summary_zh') or payload.get('summary_zh'))}",
+                "变更文件: " + self._format_items(payload.get("changed_files", []), limit=8),
+                "阻塞: " + self._format_items(payload.get("blockers_zh", []), limit=3),
+            ],
+        )
         self._transition(
             task_id,
             manifest,
@@ -723,7 +1016,7 @@ class Orchestrator:
         checks = accepted_contract.get("l1_checks", [])
         results: list[dict[str, Any]] = []
         for check in checks:
-            check_result = self._run_check(check, feature_id)
+            check_result = self._run_check(check, feature_id, self._project_workspace(manifest))
             results.append(check_result)
         implementation["l1_checks"] = [
             item for item in implementation["l1_checks"] if item.get("feature_id") != feature_id
@@ -733,6 +1026,20 @@ class Orchestrator:
             execution["status"] = "passed"
             implementation["current_feature_id"] = None
             self._save_state(task_id, manifest, sprint)
+            self._emit_progress(
+                f"L1 检查通过: {self._feature_title(accepted_contract, feature_id)}",
+                [
+                    "检查: "
+                    + self._format_items(
+                        [
+                            f"{item.get('check_id')}={'PASS' if item.get('pass') else 'FAIL'}"
+                            for item in results
+                        ],
+                        limit=8,
+                    ),
+                    "下一步: 进入下一个 feature。",
+                ],
+            )
             self._transition(
                 task_id,
                 manifest,
@@ -747,6 +1054,21 @@ class Orchestrator:
             sprint["status"] = STATUS_BLOCKED
             manifest["status"] = STATUS_BLOCKED
             self._save_state(task_id, manifest, sprint)
+            self._emit_progress(
+                f"L1 检查阻塞: {self._feature_title(accepted_contract, feature_id)}",
+                [
+                    "失败检查: "
+                    + self._format_items(
+                        [
+                            f"{item.get('check_id')}: {self._short_text(item.get('evidence_zh'), 90)}"
+                            for item in results
+                            if not item.get("pass")
+                        ],
+                        limit=5,
+                    ),
+                    "下一步: 任务 blocked，需要人工处理。",
+                ],
+            )
             self._append_event(
                 task_id,
                 sprint,
@@ -758,6 +1080,21 @@ class Orchestrator:
             return
         execution["status"] = "l1_failed"
         self._save_state(task_id, manifest, sprint)
+        self._emit_progress(
+            f"L1 检查失败，返工: {self._feature_title(accepted_contract, feature_id)}",
+            [
+                "失败检查: "
+                + self._format_items(
+                    [
+                        f"{item.get('check_id')}: {self._short_text(item.get('evidence_zh'), 90)}"
+                        for item in results
+                        if not item.get("pass")
+                    ],
+                    limit=5,
+                ),
+                "下一步: 回到 generator 修复。",
+            ],
+        )
         self._transition(
             task_id,
             manifest,
@@ -767,14 +1104,14 @@ class Orchestrator:
             "generator",
         )
 
-    def _run_check(self, check: dict[str, Any], feature_id: str) -> dict[str, Any]:
+    def _run_check(self, check: dict[str, Any], feature_id: str, workspace: Path) -> dict[str, Any]:
         command = check["command"]
         if not self._looks_like_shell_command(command):
-            return self._run_builtin_l1_check(check, feature_id)
+            return self._run_builtin_l1_check(check, feature_id, workspace)
         try:
             proc = subprocess.run(
                 command,
-                cwd=self.root,
+                cwd=workspace,
                 text=True,
                 capture_output=True,
                 shell=True,
@@ -816,8 +1153,8 @@ class Orchestrator:
             "ls",
         }
 
-    def _run_builtin_l1_check(self, check: dict[str, Any], feature_id: str) -> dict[str, Any]:
-        html_files = sorted(self.root.glob("*.html")) + sorted((self.root / "public").glob("*.html"))
+    def _run_builtin_l1_check(self, check: dict[str, Any], feature_id: str, workspace: Path) -> dict[str, Any]:
+        html_files = sorted(workspace.glob("*.html")) + sorted((workspace / "public").glob("*.html"))
         if not html_files:
             return {
                 "feature_id": feature_id,
@@ -889,6 +1226,20 @@ class Orchestrator:
             "max_concurrency": self.config.review.max_concurrency,
         }
         self._save_state(task_id, manifest, sprint)
+        self._emit_progress(
+            "Review 队列已生成",
+            [
+                f"任务数: {len(review_jobs)}",
+                "队列: "
+                + self._format_items(
+                    [
+                        f"{job['scope_type']}:{job['scope_id']}"
+                        for job in review_jobs
+                    ],
+                    limit=10,
+                ),
+            ],
+        )
         self._transition(
             task_id,
             manifest,
@@ -932,6 +1283,21 @@ class Orchestrator:
                 results.append(verdict)
                 job["status"] = "completed"
                 manifest["review_queue_summary"]["completed"] += 1
+                self._emit_progress(
+                    f"Review 完成: {job['scope_type']}:{job['scope_id']}",
+                    [
+                        f"结论: {'通过' if verdict.get('pass') else '未通过'}",
+                        f"摘要: {self._short_text(verdict.get('summary_zh'))}",
+                        "Findings: "
+                        + self._format_items(
+                            [
+                                finding.get("summary_zh", finding.get("finding_id", ""))
+                                for finding in verdict.get("findings", [])
+                            ],
+                            limit=3,
+                        ),
+                    ],
+                )
         sprint["reviews"]["feature_reviews"] = [
             item for item in results if item["scope_type"] == "feature"
         ]
@@ -941,6 +1307,14 @@ class Orchestrator:
         manifest["review_queue_summary"]["queued"] = 0
         manifest["review_queue_summary"]["running"] = 0
         self._save_state(task_id, manifest, sprint)
+        self._emit_progress(
+            "Review 执行完成",
+            [
+                f"完成数: {len(results)}",
+                f"通过数: {sum(1 for item in results if item.get('pass'))}",
+                f"未通过数: {sum(1 for item in results if not item.get('pass'))}",
+            ],
+        )
         self._transition(
             task_id,
             manifest,
@@ -1002,6 +1376,13 @@ class Orchestrator:
         }
         self._save_state(task_id, manifest, sprint)
         if all_passed:
+            self._emit_progress(
+                "Review 聚合通过",
+                [
+                    "结论: 所有必需 review 均通过。",
+                    "下一步: 进入 holistic review。",
+                ],
+            )
             self._transition(
                 task_id,
                 manifest,
@@ -1024,6 +1405,21 @@ class Orchestrator:
             },
         }
         self._save_state(task_id, manifest, sprint)
+        self._emit_progress(
+            "Review 聚合未通过，准备返工",
+            [
+                f"Open findings: {len(open_findings)}",
+                "建议: "
+                + self._format_items(
+                    [
+                        item.get("suggested_fix_zh") or item.get("summary_zh", "")
+                        for item in open_findings
+                    ],
+                    limit=5,
+                ),
+                "下一步: 创建下一轮 Sprint。",
+            ],
+        )
         self._transition(
             task_id,
             manifest,
@@ -1065,6 +1461,13 @@ class Orchestrator:
             sprint["status"] = STATUS_DONE
             manifest["status"] = STATUS_DONE
             self._save_state(task_id, manifest, sprint)
+            self._emit_progress(
+                "Holistic Review 通过",
+                [
+                    f"摘要: {self._short_text(result.payload.get('summary_zh'))}",
+                    "结论: 任务完成。",
+                ],
+            )
             self._append_event(
                 task_id,
                 sprint,
@@ -1074,6 +1477,15 @@ class Orchestrator:
                 {},
             )
             return
+        self._emit_progress(
+            "Holistic Review 未通过，准备返工",
+            [
+                f"摘要: {self._short_text(result.payload.get('summary_zh'))}",
+                "满意度缺口: " + self._format_items(result.payload.get("satisfaction_gaps_zh", []), limit=5),
+                "需结转 features: " + self._format_items(result.payload.get("carry_forward_required", []), limit=8),
+                "下一步: 创建下一轮 Sprint。",
+            ],
+        )
         self._transition(
             task_id,
             manifest,
@@ -1112,6 +1524,22 @@ class Orchestrator:
             "reason_zh": "上一轮已结转，开始下一轮 Sprint。",
         }
         self.storage.save_manifest(task_id, manifest)
+        self._emit_progress(
+            f"已创建 Sprint {next_number}",
+            [
+                "继承已通过 features: "
+                + self._format_items(
+                    [item.get("feature_id", "") for item in next_seed.get("accepted_features_inherited", [])],
+                    limit=8,
+                ),
+                "待处理 features: "
+                + self._format_items(
+                    [item.get("feature_id", "") for item in next_seed.get("open_features", [])],
+                    limit=8,
+                ),
+                "Open findings: " + str(len(next_seed.get("open_findings", []))),
+            ],
+        )
         self._append_event(
             task_id,
             sprint,

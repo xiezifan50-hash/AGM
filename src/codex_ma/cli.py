@@ -25,12 +25,20 @@ def build_parser() -> ArgumentParser:
     create_parser = task_subparsers.add_parser("create", help="创建任务")
     create_parser.add_argument("user_request", help="用户原始需求")
     create_parser.add_argument("--task-id", help="自定义 task id")
+    create_parser.add_argument(
+        "--workspace",
+        required=True,
+        help="任务项目空间；内部 agent 只能在此目录内工作",
+    )
 
     run_parser = subparsers.add_parser("run", help="运行任务直到暂停或完成")
     run_parser.add_argument("task_id")
 
     resume_parser = subparsers.add_parser("resume", help="恢复任务")
     resume_parser.add_argument("task_id")
+
+    stop_parser = subparsers.add_parser("stop", help="停止任务并标记为 aborted")
+    stop_parser.add_argument("task_id")
 
     status_parser = subparsers.add_parser("status", help="查看状态")
     status_parser.add_argument("task_id")
@@ -69,17 +77,30 @@ def dispatch(args: Namespace, root: Path, storage: Storage, config: Any) -> int:
         return run_doctor(root, storage, config)
     if args.command == "task" and args.task_command == "create":
         orchestrator = Orchestrator(root, storage, None, config)
-        result = orchestrator.create_task(args.user_request, task_id=args.task_id)
+        result = orchestrator.create_task(
+            args.user_request,
+            task_id=args.task_id,
+            project_workspace=args.workspace,
+        )
         print(result["task_id"])
+        return 0
+    if args.command == "stop":
+        orchestrator = Orchestrator(root, storage, None, config)
+        result = orchestrator.stop(args.task_id)
+        print(render_status(result["manifest"], result["sprint"]))
         return 0
     runner = build_runner(root, config)
     orchestrator = Orchestrator(root, storage, runner, config)
     if args.command == "run":
-        result = orchestrator.run(args.task_id)
+        print(f"开始运行任务: {args.task_id}")
+        result = orchestrator.run(args.task_id, progress_func=print)
+        print("\n== 当前状态 ==")
         print(render_status(result["manifest"], result["sprint"]))
         return 0
     if args.command == "resume":
-        result = orchestrator.resume(args.task_id)
+        print(f"恢复任务: {args.task_id}")
+        result = orchestrator.resume(args.task_id, progress_func=print)
+        print("\n== 当前状态 ==")
         print(render_status(result["manifest"], result["sprint"]))
         return 0
     if args.command == "status":
@@ -126,6 +147,7 @@ def render_status(manifest: dict[str, Any], sprint: dict[str, Any]) -> str:
     lines = [
         f"task_id: {manifest['task_id']}",
         f"status: {manifest['status']}",
+        f"project_workspace: {manifest.get('project_workspace') or '(未绑定)'}",
         f"current_phase: {manifest['current_phase']}",
         f"latest_sprint: {manifest['latest_sprint']}",
         f"resume_reason: {manifest['resume_pointer']['reason_zh']}",

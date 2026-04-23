@@ -152,4 +152,7 @@ class Storage:
         return path
 
     def relative(self, path: Path) -> str:
-        return relative_path(self.root, path)
+        try:
+            return relative_path(self.root, path)
+        except ValueError:
+            return path.as_posix()

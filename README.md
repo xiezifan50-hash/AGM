@@ -5,7 +5,7 @@
 ## 当前状态
 
 - 项目阶段：原型可运行。
-- 主体能力：已具备任务创建、Sprint 状态持久化、合同协商、串行实现、L1 检查、并行 review、Holistic Review、失败结转和恢复入口。
+- 主体能力：已具备任务创建、项目空间隔离、Sprint 状态持久化、合同协商、串行实现、L1 检查、并行 review、Holistic Review、失败结转、恢复入口、显式停止入口和命令行阶段成果输出。
 - 最新业务交付：`snake.html` 单文件贪吃蛇网页小游戏已完成，`runs/task-003` 记录显示第 4 个 Sprint 已通过 review 与 Holistic Review，任务状态为 `done`。
 - 测试覆盖：已有 CLI、状态计算、完整编排流程和人工介入恢复相关单元测试。
 
@@ -14,8 +14,9 @@
 ```text
 用户请求
   -> CLI
+  -> 显式 project workspace
   -> Orchestrator 状态机
-  -> Runner 调用 Codex CLI 或 fixture
+  -> Runner 在 project workspace 内调用 Codex CLI 或 fixture
   -> Agent JSON 输出
   -> JSON Schema 校验
   -> Storage 持久化 manifest / sprint / events / artifacts
@@ -24,14 +25,14 @@
 核心模块职责：
 
 - `src/codex_ma/cli.py`：命令行入口，负责解析命令并派发到编排器。
-- `src/codex_ma/orchestrator.py`：核心状态机，串联协商、实现、检查、review、结转和恢复流程。
+- `src/codex_ma/orchestrator.py`：核心状态机，串联协商、实现、检查、review、结转和恢复流程，并确保内部 agent 只在任务绑定的 project workspace 中运行。
 - `src/codex_ma/runner.py`：Agent 执行适配层，支持真实 `codex exec` 与测试用 `FixtureRunner`。
 - `src/codex_ma/storage.py`：运行状态与事件日志的读写，写入前执行 schema 校验。
 - `src/codex_ma/state.py`：manifest、sprint、合同共识、下一轮继承等状态构建逻辑。
 - `src/codex_ma/config.py`：读取 `multiagent.toml`，解析角色 profile、并发、重试和安全配置。
 - `src/codex_ma/prompts.py`：不同角色和动作的提示词模板。
 - `schemas/`：持久化状态、事件日志和 Agent 输出的 JSON Schema。
-- `runs/`：任务运行态目录，包含 `manifest.json`、`sprint-xxx.json`、`events.jsonl` 和 artifacts。
+- `runs/`：任务编排状态目录，包含 `manifest.json`、`sprint-xxx.json` 和 `events.jsonl`；内部 agent 结构化 artifacts 写入 project workspace 的 `.codex-ma/runs/<task-id>/artifacts/`。
 - `tests/`：单元测试与 fixture 工作区。
 
 ## Sprint 流程
@@ -46,14 +47,15 @@
 8. `REVIEW_PREP` / `PARALLEL_REVIEW`：生成 feature review 和 dimension review，并按配置并发执行。
 9. `REVIEW_AGGREGATE`：聚合 review 结果，存在问题则进入下一轮 Sprint。
 10. `HOLISTIC_REVIEW`：evaluator 按已协商的全局标准做最终审批。
-11. `DONE` / `NEXT_SPRINT_PREP` / `blocked`：完成、结转下一轮或阻塞。
+11. `DONE` / `NEXT_SPRINT_PREP` / `blocked` / `aborted`：完成、结转下一轮、阻塞或人工停止。
 
 ## 快速开始
 
 ```bash
 python3 -m codex_ma init
-python3 -m codex_ma task create "实现一个可恢复的多 agent orchestrator"
+python3 -m codex_ma task create --workspace ./project-space "实现一个可恢复的多 agent orchestrator"
 python3 -m codex_ma run task-001
+python3 -m codex_ma stop task-001
 python3 -m codex_ma status task-001
 ```
 
@@ -68,11 +70,22 @@ python3 -m codex_ma status task-001
 
 - `codex-ma init`：初始化目录与默认配置。
 - `codex-ma doctor`：检查 Codex CLI、profile、schema 和已有任务状态。
-- `codex-ma task create <用户需求>`：创建任务，可通过 `--task-id` 指定 ID。
-- `codex-ma run <task-id>`：运行任务直到完成、阻塞或等待人工输入。
-- `codex-ma resume <task-id>`：从人工暂停点或当前状态继续运行。
+- `codex-ma task create --workspace <path> <用户需求>`：创建任务，可通过 `--task-id` 指定 ID。`--workspace` 必填，内部 agent 只能在该目录内工作。
+- `codex-ma run <task-id>`：运行任务直到完成、阻塞或等待人工输入；运行中会主动输出调研、协商、实现、L1、review、holistic review 和返工决策摘要。
+- `codex-ma resume <task-id>`：从人工暂停点或当前状态继续运行，并继续输出阶段成果摘要。
+- `codex-ma stop <task-id>`：将任务标记为 `aborted`，让后续 `run` / `resume` 不再推进；如果已有 runner 正在执行，当前 agent 调用返回后会停止，不会用旧内存状态覆盖停止结果。
 - `codex-ma status <task-id> [--json]`：查看任务状态。
 - `codex-ma events <task-id> [--tail N]`：查看事件流。
+
+## 运行输出
+
+`run` / `resume` 会在关键阶段完成后打印易读摘要，减少反复手动查询状态：
+
+- 调研阶段：输出 generator / evaluator 的摘要、feature 计划、主要风险与关注点。
+- Negotiate：每轮输出 pass 状态、generator 修订摘要、evaluator 结论、未决点；合同达成后输出 feature 队列和全局验收摘要。
+- 实现阶段：每个 feature 完成后输出执行摘要、变更文件、阻塞信息；L1 检查输出通过/失败详情和是否返工。
+- Review：输出 review 队列、每个 review verdict、findings 摘要、聚合结果和建议。
+- Holistic Review：输出最终通过/未通过、满意度缺口、需结转 feature 和下一步。
 
 ## 配置
 
@@ -92,12 +105,20 @@ python3 -m codex_ma status task-001
 
 ## 数据与产物
 
-每个任务会写入 `runs/<task-id>/`：
+每个任务必须绑定一个 project workspace。编排器在 `runs/<task-id>/` 保存任务状态：
 
 - `manifest.json`：任务级状态、当前阶段、恢复指针、agent session、review 队列摘要。
 - `sprint-001.json` 等：Sprint 级合同、实现、review、Holistic Review 和下一轮继承信息。
 - `events.jsonl`：按时间追加的事件日志。
-- `artifacts/sprint-xxx/*.json`：每次 Agent 调用的结构化输出。
+
+内部 agent 只能在绑定的 project workspace 内运行和写入文件：
+
+- Codex CLI 的工作目录为 project workspace。
+- Agent JSON artifacts 写入 `project_workspace/.codex-ma/runs/<task-id>/artifacts/sprint-xxx/*.json`。
+- L1 shell 检查也在 project workspace 中执行。
+- project workspace 不能是 `codex-ma` 工具仓库本身或其父目录，防止内部 agent 观察或修改工具层文件。
+- project workspace 内的 `README.md` / `README.markdown` 属于项目文件，内部 agent 可以按任务需要修改；project workspace 外的 README 或其它文件不属于内部 agent 工作范围。
+- generator 输出的 `changed_files` 会做边界校验，任何指向 project workspace 外的路径都会让本次 agent 调用失败。
 
 Agent 输出必须匹配 `schemas/agent-output/*.schema.json`。任务状态和事件分别受 `schemas/manifest.schema.json`、`schemas/sprint-state.schema.json`、`schemas/event-log.schema.json` 约束。
 
@@ -136,6 +157,9 @@ python3 -m unittest discover -s tests -v
 - 增加单元测试，覆盖 CLI 初始化与任务创建、共识计算、完整运行、人工介入恢复。
 - 新增 `snake.html` 单文件贪吃蛇小游戏，并通过 `task-003` 的最终 Sprint 验收。
 - 扩展 README，补充项目架构、进展、更新日志和维护约束。
+- 新增 `codex-ma stop <task-id>`，支持把任务显式标记为 `aborted`，并防止运行中的旧状态在 agent 调用返回后覆盖停止结果。
+- 新增强制 project workspace：`task create` 必须指定 `--workspace`，内部 agent 的 cwd、artifacts 和 L1 检查都限制在该目录；项目空间内 README 可按项目任务修改，工具仓库 README 不暴露给内部 agent。
+- 增强 `run` / `resume` 的交互输出：阶段完成后主动打印合同协商、feature 执行、L1 检查、review verdict、返工与最终审批摘要。
 
 ## 维护约束
 

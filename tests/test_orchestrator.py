@@ -1,6 +1,24 @@
 from __future__ import annotations
 
 from testlib import WorkspaceTestCase
+from codex_ma.orchestrator import WorkspaceViolation
+from codex_ma.runner import BaseRunner, RunnerRequest, RunnerResult
+
+
+class CallbackRunner(BaseRunner):
+    def __init__(self, payload: dict, callback):
+        self.payload = payload
+        self.callback = callback
+
+    def run(self, request: RunnerRequest) -> RunnerResult:
+        request.output_path.parent.mkdir(parents=True, exist_ok=True)
+        self.callback()
+        request.output_path.write_text("{}\n", encoding="utf-8")
+        return RunnerResult(
+            payload=self.payload,
+            session_id="callback-session",
+            command=["callback-runner", request.action],
+        )
 
 
 def make_contract(summary: str = "实现核心功能") -> dict:
@@ -99,6 +117,59 @@ def make_holistic(pass_value: bool = True) -> dict:
 
 
 class OrchestratorTests(WorkspaceTestCase):
+    def workspace_path(self, name: str = "project") -> str:
+        return (self.workspace / name).as_posix()
+
+    def test_stop_marks_task_aborted_and_run_noops(self) -> None:
+        orchestrator = self.make_orchestrator({"steps": []})
+        orchestrator.init_workspace()
+        orchestrator.create_task("实现核心功能", "task-stop", self.workspace_path())
+
+        stopped = orchestrator.stop("task-stop")
+        self.assertEqual(stopped["manifest"]["status"], "aborted")
+        self.assertEqual(stopped["sprint"]["status"], "aborted")
+
+        result = orchestrator.run("task-stop")
+        self.assertEqual(result["manifest"]["status"], "aborted")
+        self.assertEqual(result["sprint"]["phase"], "INIT")
+
+        events = orchestrator.events("task-stop")
+        self.assertEqual(events[-1]["event_type"], "TASK_STOPPED")
+
+    def test_workspace_must_not_be_tool_root(self) -> None:
+        orchestrator = self.make_orchestrator({"steps": []})
+        orchestrator.init_workspace()
+        with self.assertRaises(ValueError):
+            orchestrator.create_task("实现核心功能", "task-root", self.workspace)
+
+    def test_changed_files_are_limited_to_workspace(self) -> None:
+        orchestrator = self.make_orchestrator({"steps": []})
+        orchestrator.init_workspace()
+        result = orchestrator.create_task("实现核心功能", "task-boundary", self.workspace_path())
+        orchestrator._assert_payload_within_workspace(
+            result["manifest"],
+            {"changed_files": ["README.md", "src/app.py"]},
+        )
+        with self.assertRaises(WorkspaceViolation):
+            orchestrator._assert_payload_within_workspace(
+                result["manifest"],
+                {"changed_files": ["../README.md"]},
+            )
+
+    def test_stop_during_agent_call_is_not_overwritten(self) -> None:
+        orchestrator = self.make_orchestrator()
+        orchestrator.init_workspace()
+        orchestrator.create_task("实现核心功能", "task-stop-race", self.workspace_path())
+        runner = CallbackRunner(
+            make_contract(),
+            lambda: orchestrator.stop("task-stop-race"),
+        )
+        orchestrator.runner = runner
+
+        result = orchestrator.run("task-stop-race")
+        self.assertEqual(result["manifest"]["status"], "aborted")
+        self.assertIsNone(result["sprint"]["contract"]["generator_research"])
+
     def test_full_run_reaches_done(self) -> None:
         contract = make_contract()
         scenario = {
@@ -146,12 +217,55 @@ class OrchestratorTests(WorkspaceTestCase):
         }
         orchestrator = self.make_orchestrator(scenario)
         orchestrator.init_workspace()
-        orchestrator.create_task("实现核心功能", "task-001")
+        orchestrator.create_task("实现核心功能", "task-001", self.workspace_path())
         result = orchestrator.run("task-001")
         self.assertEqual(result["manifest"]["status"], "done")
         self.assertEqual(result["sprint"]["phase"], "DONE")
         self.assertEqual(result["sprint"]["implementation"]["features"][0]["status"], "passed")
         self.assertTrue(result["sprint"]["reviews"]["aggregate"]["all_required_passed"])
+
+    def test_run_emits_readable_progress(self) -> None:
+        contract = make_contract()
+        scenario = {
+            "steps": [
+                {"match": {"action": "GENERATOR_RESEARCH"}, "payload": contract, "session_id": "gen-contract"},
+                {"match": {"action": "EVALUATOR_RESEARCH"}, "payload": make_feedback(True), "session_id": "eval-contract"},
+                {"match": {"action": "GENERATOR_PROPOSAL"}, "payload": contract, "session_id": "gen-contract"},
+                {"match": {"action": "EVALUATOR_FEEDBACK"}, "payload": make_feedback(True), "session_id": "eval-contract"},
+                {"match": {"action": "GENERATOR_ARGUE_BACK"}, "payload": make_resolution(contract), "session_id": "gen-contract"},
+                {"match": {"action": "EVALUATOR_RESOLUTION"}, "payload": make_feedback(True), "session_id": "eval-contract"},
+                {
+                    "match": {"action": "FEATURE_EXECUTION", "logical_session": "generator_feature_core"},
+                    "payload": {
+                        "summary_zh": "已完成核心功能实现",
+                        "research_summary_zh": "确认实现路径",
+                        "execution_summary_zh": "写入核心逻辑",
+                        "status": "in_progress",
+                        "changed_files": ["app.py"],
+                        "blockers_zh": []
+                    },
+                    "session_id": "gen-core"
+                },
+                {"match": {"action": "FEATURE_REVIEW"}, "payload": make_review("feature-core", "feature", "core"), "session_id": "review-core"},
+                {"match": {"action": "DIMENSION_REVIEW", "logical_session": "reviewer_dimension_correctness"}, "payload": make_review("dimension-correctness", "dimension", "correctness"), "session_id": "review-dim-1"},
+                {"match": {"action": "DIMENSION_REVIEW", "logical_session": "reviewer_dimension_regression-risk"}, "payload": make_review("dimension-regression-risk", "dimension", "regression-risk"), "session_id": "review-dim-2"},
+                {"match": {"action": "DIMENSION_REVIEW", "logical_session": "reviewer_dimension_api-ux-contract"}, "payload": make_review("dimension-api-ux-contract", "dimension", "api-ux-contract"), "session_id": "review-dim-3"},
+                {"match": {"action": "HOLISTIC_REVIEW"}, "payload": make_holistic(True), "session_id": "eval-holistic"}
+            ]
+        }
+        orchestrator = self.make_orchestrator(scenario)
+        orchestrator.init_workspace()
+        orchestrator.create_task("实现核心功能", "task-progress", self.workspace_path())
+        messages: list[str] = []
+
+        orchestrator.run("task-progress", progress_func=messages.append)
+
+        output = "\n".join(messages)
+        self.assertIn("Generator 调研完成", output)
+        self.assertIn("合同已接受", output)
+        self.assertIn("L1 检查通过", output)
+        self.assertIn("Review 聚合通过", output)
+        self.assertIn("Holistic Review 通过", output)
 
     def test_resume_after_human_gate(self) -> None:
         contract = make_contract("协商版核心功能")
@@ -218,7 +332,7 @@ class OrchestratorTests(WorkspaceTestCase):
         }
         orchestrator = self.make_orchestrator(scenario)
         orchestrator.init_workspace()
-        orchestrator.create_task("实现协商式核心功能", "task-002")
+        orchestrator.create_task("实现协商式核心功能", "task-002", self.workspace_path())
         paused = orchestrator.run("task-002")
         self.assertEqual(paused["manifest"]["current_phase"], "AWAITING_HUMAN")
 

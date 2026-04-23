@@ -18,6 +18,7 @@
   "properties": {
     "task_id": { "type": "string" },
     "user_request": { "type": "string" },
+    "project_workspace": { "type": ["string", "null"] },
     "latest_sprint": { "type": "integer", "minimum": 1 },
     "latest_file": { "type": "string" },
     "status": {
