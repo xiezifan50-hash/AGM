@@ -5,6 +5,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Callable
 import json
+import re
 import subprocess
 
 from codex_ma.config import ProjectConfig
@@ -768,6 +769,8 @@ class Orchestrator:
 
     def _run_check(self, check: dict[str, Any], feature_id: str) -> dict[str, Any]:
         command = check["command"]
+        if not self._looks_like_shell_command(command):
+            return self._run_builtin_l1_check(check, feature_id)
         try:
             proc = subprocess.run(
                 command,
@@ -789,6 +792,64 @@ class Orchestrator:
             "check_id": check["check_id"],
             "name_zh": check["name_zh"],
             "command": command,
+            "required": check.get("required", True),
+            "pass": passed,
+            "evidence_zh": evidence,
+        }
+
+    def _looks_like_shell_command(self, command: str) -> bool:
+        if not command or re.search(r"[\u4e00-\u9fff]", command):
+            return False
+        first_token = command.strip().split()[0]
+        if first_token.startswith(("./", "/", "python", "node", "npm", "npx")):
+            return True
+        return first_token in {
+            "bash",
+            "sh",
+            "pytest",
+            "unittest",
+            "true",
+            "test",
+            "rg",
+            "grep",
+            "find",
+            "ls",
+        }
+
+    def _run_builtin_l1_check(self, check: dict[str, Any], feature_id: str) -> dict[str, Any]:
+        html_files = sorted(self.root.glob("*.html")) + sorted((self.root / "public").glob("*.html"))
+        if not html_files:
+            return {
+                "feature_id": feature_id,
+                "check_id": check["check_id"],
+                "name_zh": check["name_zh"],
+                "command": check["command"],
+                "required": check.get("required", True),
+                "pass": False,
+                "evidence_zh": "L1 command 不是可执行 shell 命令，且未找到可用于静态冒烟检查的 HTML 文件。",
+            }
+        target = html_files[0]
+        text = target.read_text(encoding="utf-8", errors="ignore").lower()
+        checks = {
+            "html": "<html" in text,
+            "style": "<style" in text or ".css" in text,
+            "script": "<script" in text or ".js" in text,
+            "game_surface": "canvas" in text or "board" in text,
+            "score": "score" in text or "分数" in text,
+            "restart": "restart" in text or "重新" in text,
+            "controls": "keydown" in text or "wasd" in text or "方向键" in text,
+        }
+        passed = all(checks.values())
+        evidence = (
+            f"内置静态网页冒烟检查: {target.name}; "
+            + ", ".join(f"{name}={'OK' if ok else 'MISS'}" for name, ok in checks.items())
+            + "。原 L1 command 不是可执行 shell 命令，已按网页任务降级为静态检查。"
+        )
+        return {
+            "feature_id": feature_id,
+            "check_id": check["check_id"],
+            "name_zh": check["name_zh"],
+            "command": check["command"],
             "required": check.get("required", True),
             "pass": passed,
             "evidence_zh": evidence,

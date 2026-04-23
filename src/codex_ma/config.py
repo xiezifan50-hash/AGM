@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+import shutil
 import tomllib
 
 from codex_ma.constants import DEFAULT_DIMENSIONS, DEFAULT_ROLE_PROFILES
@@ -46,6 +47,46 @@ class ProjectConfig:
     review: ReviewConfig = field(default_factory=ReviewConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
     profiles: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_ROLE_PROFILES))
+
+
+def resolve_codex_binary(configured_binary: str) -> str | None:
+    candidates = []
+    if configured_binary:
+        candidates.append(configured_binary)
+    candidates.extend(
+        [
+            "codex",
+            "/Applications/Codex.app/Contents/Resources/codex",
+        ]
+    )
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if "/" in candidate:
+            path = Path(candidate).expanduser()
+            if path.exists() and path.is_file():
+                return str(path)
+            continue
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+    return None
+
+
+def codex_profile_exists(profile_name: str) -> bool:
+    if not profile_name:
+        return False
+    config_path = Path("~/.codex/config.toml").expanduser()
+    if not config_path.exists():
+        return False
+    try:
+        data = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
+    profiles = data.get("profiles", {})
+    return isinstance(profiles, dict) and profile_name in profiles
 
 
 def _as_tuple(value: Any, default: tuple[str, ...]) -> tuple[str, ...]:

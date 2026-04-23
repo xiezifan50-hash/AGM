@@ -9,7 +9,7 @@ import os
 import re
 import subprocess
 
-from codex_ma.config import ProjectConfig
+from codex_ma.config import ProjectConfig, codex_profile_exists, resolve_codex_binary
 
 
 class RunnerError(RuntimeError):
@@ -113,15 +113,20 @@ class CodexRunner(BaseRunner):
         )
 
     def _build_command(self, request: RunnerRequest) -> list[str]:
-        cmd = [self.config.codex.binary, "exec"]
-        if request.session_id:
-            cmd.extend(["resume", request.session_id])
+        binary = resolve_codex_binary(self.config.codex.binary)
+        if not binary:
+            raise RunnerError("未找到 Codex CLI，可在 multiagent.toml 的 [codex].binary 中配置绝对路径")
+        # `codex exec resume` currently does not support the same option set as
+        # fresh `codex exec` runs, notably `--output-schema`. The orchestrator
+        # already injects all durable context from sprint state, so v1 keeps
+        # calls schema-safe by starting a fresh non-interactive exec per phase.
+        cmd = [binary, "exec", "-C", str(request.cwd)]
+        if codex_profile_exists(request.profile):
+            cmd.extend(["-p", request.profile])
+        else:
+            cmd.extend(self._fallback_role_flags(request))
         cmd.extend(
             [
-                "-C",
-                str(request.cwd),
-                "-p",
-                request.profile,
                 "--output-schema",
                 str(request.schema_path),
                 "--json",
@@ -135,6 +140,13 @@ class CodexRunner(BaseRunner):
             cmd.append("--skip-git-repo-check")
         cmd.append("-")
         return cmd
+
+    def _fallback_role_flags(self, request: RunnerRequest) -> list[str]:
+        if request.role == "generator":
+            return ["-s", "workspace-write", "-a", "on-request"]
+        if request.role in {"evaluator", "reviewer", "orchestrator"}:
+            return ["-s", "read-only", "-a", "never"]
+        return []
 
 
 def build_runner(root: Path, config: ProjectConfig) -> BaseRunner:

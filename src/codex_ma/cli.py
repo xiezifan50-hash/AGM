@@ -7,7 +7,7 @@ import json
 import shutil
 import sys
 
-from codex_ma.config import load_config
+from codex_ma.config import codex_profile_exists, load_config, resolve_codex_binary
 from codex_ma.orchestrator import Orchestrator
 from codex_ma.runner import RunnerError, build_runner
 from codex_ma.storage import Storage
@@ -101,7 +101,12 @@ def dispatch(args: Namespace, root: Path, storage: Storage, config: Any) -> int:
 
 def run_doctor(root: Path, storage: Storage, config: Any) -> int:
     checks: list[tuple[str, bool, str]] = []
-    checks.append(("codex binary", shutil.which(config.codex.binary) is not None, config.codex.binary))
+    resolved_binary = resolve_codex_binary(config.codex.binary)
+    checks.append(("codex binary", resolved_binary is not None, resolved_binary or config.codex.binary))
+    for role, profile in sorted(config.profiles.items()):
+        exists = codex_profile_exists(profile)
+        detail = profile if exists else f"{profile} (未找到，运行时将回退到内置 sandbox/approval)"
+        checks.append((f"profile:{role}", True, detail))
     checks.append(("multiagent.toml", (root / "multiagent.toml").exists(), "配置文件"))
     checks.append(("schemas", (root / "schemas").exists(), "schema 目录"))
     checks.append(("runs", (root / "runs").exists(), "运行目录"))

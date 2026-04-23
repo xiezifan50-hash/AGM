@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Review Verdict Output",
   "type": "object",
+  "additionalProperties": false,
   "required": [
     "review_id",
     "scope_type",
@@ -22,6 +23,7 @@
       "type": "array",
       "items": {
         "type": "object",
+        "additionalProperties": false,
         "required": ["finding_id", "severity", "summary_zh", "evidence_zh", "repro_steps_zh", "suggested_fix_zh"],
         "properties": {
           "finding_id": { "type": "string" },

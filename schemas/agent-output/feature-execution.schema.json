@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Feature Execution Output",
   "type": "object",
+  "additionalProperties": false,
   "required": [
     "summary_zh",
     "research_summary_zh",

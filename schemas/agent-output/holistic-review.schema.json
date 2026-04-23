@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Holistic Review Output",
   "type": "object",
+  "additionalProperties": false,
   "required": [
     "pass",
     "summary_zh",
@@ -19,6 +20,7 @@
       "type": "array",
       "items": {
         "type": "object",
+        "additionalProperties": false,
         "required": ["finding_id", "reason_zh"],
         "properties": {
           "finding_id": { "type": "string" },
@@ -28,6 +30,7 @@
     },
     "decision_basis": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["unmet_acceptance_criteria_zh", "triggered_fail_conditions_zh", "emergent_blockers"],
       "properties": {
         "unmet_acceptance_criteria_zh": { "type": "array", "items": { "type": "string" } },
@@ -36,6 +39,7 @@
           "type": "array",
           "items": {
             "type": "object",
+            "additionalProperties": false,
             "required": ["blocker_id", "severity", "reason_zh", "why_now_zh", "should_promote_to_contract", "next_negotiation_hint_zh"],
             "properties": {
               "blocker_id": { "type": "string" },

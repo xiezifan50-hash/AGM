@@ -1,0 +1,593 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>霓虹蛇道</title>
+  <style>
+    :root{
+      --bg:#08111f;
+      --panel:rgba(9,16,30,.72);
+      --panel-border:rgba(140,180,255,.16);
+      --text:#edf4ff;
+      --muted:#93a7c7;
+      --accent:#67f3c2;
+      --accent-2:#ff7a90;
+      --accent-3:#7aa7ff;
+      --shadow:0 24px 80px rgba(0,0,0,.42);
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0;
+      font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      color:var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(122,167,255,.18), transparent 32%),
+        radial-gradient(circle at bottom right, rgba(103,243,194,.14), transparent 28%),
+        linear-gradient(160deg, #040812 0%, #091423 48%, #040812 100%);
+      overflow:hidden;
+    }
+    .shell{
+      min-height:100%;
+      display:grid;
+      place-items:center;
+      padding:clamp(12px, 2.5vw, 28px);
+    }
+    .app{
+      width:min(100%, 940px);
+      display:grid;
+      gap:16px;
+      grid-template-columns:minmax(0, 1fr) 280px;
+      align-items:stretch;
+    }
+    .stage,.hud{
+      background:var(--panel);
+      border:1px solid var(--panel-border);
+      box-shadow:var(--shadow);
+      backdrop-filter:blur(16px);
+      border-radius:24px;
+    }
+    .stage{
+      padding:16px;
+      display:grid;
+      gap:14px;
+      align-content:start;
+      min-width:0;
+    }
+    .topbar{
+      display:flex;
+      justify-content:space-between;
+      gap:12px;
+      align-items:center;
+      flex-wrap:wrap;
+    }
+    .title{
+      display:grid;
+      gap:4px;
+    }
+    .title h1{
+      margin:0;
+      font-size:clamp(22px, 3vw, 34px);
+      letter-spacing:.08em;
+    }
+    .title p{margin:0;color:var(--muted);font-size:13px}
+    .pill{
+      padding:9px 12px;
+      border-radius:999px;
+      border:1px solid rgba(122,167,255,.25);
+      color:var(--text);
+      background:rgba(6,10,20,.45);
+      font-size:13px;
+    }
+    .board-wrap{
+      position:relative;
+      aspect-ratio:1/1;
+      width:min(100%, min(640px, calc(100dvh - 180px)));
+      max-width:100%;
+      margin-inline:auto;
+      border-radius:22px;
+      overflow:hidden;
+      background:
+        linear-gradient(135deg, rgba(255,255,255,.04), rgba(255,255,255,.015)),
+        radial-gradient(circle at center, rgba(103,243,194,.08), transparent 55%);
+      border:1px solid rgba(122,167,255,.18);
+    }
+    canvas{display:block;width:100%;height:100%}
+    .overlay{
+      position:absolute;
+      inset:0;
+      display:grid;
+      place-items:center;
+      pointer-events:none;
+      background:linear-gradient(180deg, rgba(4,8,18,.1), rgba(4,8,18,.42));
+      opacity:0;
+      transition:opacity .25s ease;
+    }
+    .overlay.visible{opacity:1}
+    .overlay-card{
+      pointer-events:auto;
+      text-align:center;
+      padding:20px 24px;
+      border-radius:20px;
+      background:rgba(8,14,26,.82);
+      border:1px solid rgba(255,255,255,.12);
+      box-shadow:0 16px 40px rgba(0,0,0,.35);
+      max-width:min(92%, 340px);
+    }
+    .overlay-card h2{margin:0 0 10px;font-size:28px}
+    .overlay-card p{margin:0 0 16px;color:var(--muted);line-height:1.5}
+    button{
+      appearance:none;
+      border:0;
+      color:#02141a;
+      background:linear-gradient(135deg, var(--accent), #b7ffe8);
+      border-radius:14px;
+      padding:12px 18px;
+      font-weight:700;
+      cursor:pointer;
+      box-shadow:0 10px 24px rgba(103,243,194,.25);
+    }
+    button:hover{filter:saturate(1.06) brightness(1.04)}
+    .hud{
+      padding:18px;
+      display:grid;
+      gap:14px;
+      align-content:start;
+      min-width:0;
+    }
+    .score{
+      display:grid;
+      gap:4px;
+      padding:14px;
+      border-radius:18px;
+      background:linear-gradient(135deg, rgba(103,243,194,.14), rgba(122,167,255,.12));
+      border:1px solid rgba(255,255,255,.08);
+    }
+    .score span{font-size:13px;color:var(--muted)}
+    .score strong{font-size:42px;line-height:1}
+    .panel{
+      display:grid;
+      gap:10px;
+      padding:14px;
+      border-radius:18px;
+      background:rgba(255,255,255,.03);
+      border:1px solid rgba(255,255,255,.06);
+    }
+    .panel h3{margin:0;font-size:15px}
+    .panel ul{margin:0;padding-left:18px;color:var(--muted);line-height:1.65}
+    .status{
+      padding:12px 14px;
+      border-radius:14px;
+      background:rgba(122,167,255,.09);
+      border:1px solid rgba(122,167,255,.16);
+      color:var(--text);
+      line-height:1.5;
+    }
+    .status strong{color:var(--accent)}
+    .status[aria-live]{min-height:3.1em}
+    .row{display:flex;gap:10px;flex-wrap:wrap}
+    button:focus-visible,
+    canvas:focus-visible{
+      outline:2px solid var(--accent);
+      outline-offset:3px;
+    }
+    @media (max-width: 820px){
+      body{overflow:auto}
+      .app{grid-template-columns:1fr}
+      .hud{order:-1}
+      .board-wrap{width:min(100%, 92vw)}
+    }
+    @media (max-width: 520px){
+      .shell{padding:10px}
+      .stage,.hud{padding:14px}
+      .board-wrap{
+        width:min(100%, calc(100vw - 28px));
+        border-radius:18px;
+      }
+      .score strong{font-size:34px}
+      .overlay-card{
+        padding:16px 18px;
+      }
+      .overlay-card h2{font-size:24px}
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="app">
+      <section class="stage">
+        <div class="topbar">
+          <div class="title">
+            <h1>霓虹蛇道</h1>
+            <p>方向键或 WASD 控制，吃掉光点，别撞上边界或自己。</p>
+          </div>
+          <div class="pill" id="speedPill">等待开始</div>
+        </div>
+        <div class="board-wrap">
+          <canvas id="game" width="640" height="640" aria-label="贪吃蛇游戏画布"></canvas>
+          <div class="overlay visible" id="overlay" aria-live="polite" aria-atomic="true">
+            <div class="overlay-card">
+              <h2 id="overlayTitle">按任意方向键开始</h2>
+              <p id="overlayText">蛇会在你首次输入合法方向后开始前进。你可以随时按空格暂停或继续。</p>
+              <button id="restartBtn" type="button">重新开始</button>
+            </div>
+          </div>
+        </div>
+      </section>
+      <aside class="hud">
+        <div class="score">
+          <span>当前分数</span>
+          <strong id="score">0</strong>
+        </div>
+        <div class="panel">
+          <h3>操作</h3>
+          <ul>
+            <li>方向键 / WASD：转向</li>
+            <li>空格：暂停或继续</li>
+            <li>回车：失败后重开</li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h3>规则</h3>
+          <ul>
+            <li>吃到光点会增长并加分</li>
+            <li>不能 180 度掉头</li>
+            <li>撞墙或撞身即结束</li>
+          </ul>
+        </div>
+        <div class="status" id="status" role="status" aria-live="polite" aria-atomic="true">状态：<strong>等待开始</strong></div>
+      </aside>
+    </div>
+  </main>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('score');
+    const statusEl = document.getElementById('status');
+    const overlay = document.getElementById('overlay');
+    const overlayTitle = document.getElementById('overlayTitle');
+    const overlayText = document.getElementById('overlayText');
+    const restartBtn = document.getElementById('restartBtn');
+    const speedPill = document.getElementById('speedPill');
+
+    const grid = 20;
+    const cols = canvas.width / grid;
+    const rows = canvas.height / grid;
+    const colors = ['#67f3c2', '#7aa7ff', '#ff7a90', '#ffd166'];
+
+    let snake, dir, nextDir, food, score, running, started, paused, gameOver, gameWon, lastTick, tickMs, pulse;
+
+    function resetGame() {
+      snake = [
+        { x: 10, y: 14 },
+        { x: 9, y: 14 },
+        { x: 8, y: 14 }
+      ];
+      dir = { x: 1, y: 0 };
+      nextDir = { x: 1, y: 0 };
+      score = 0;
+      running = false;
+      started = false;
+      paused = false;
+      gameOver = false;
+      gameWon = false;
+      lastTick = 0;
+      tickMs = 135;
+      pulse = 0;
+      food = null;
+      ensureFood();
+      settleWinIfBoardFilled();
+      syncUI();
+      overlay.classList.add('visible');
+      if (gameWon) {
+        setOverlayState('通关成功', '棋盘已满，所有格子都被你占领。按回车或点击按钮再来一局。', '再来一局');
+        setStatus('通关成功', '已通关');
+      } else {
+        setOverlayState('按任意方向键开始', '蛇会在你首次输入合法方向后开始前进。你可以随时按空格暂停或继续。', '开始游戏');
+        setStatus('等待开始', '等待开始');
+      }
+      draw();
+    }
+
+    function startGame() {
+      if (gameOver || gameWon) return;
+      settleWinIfBoardFilled();
+      if (gameWon) {
+        syncUI();
+        return;
+      }
+      started = true;
+      running = true;
+      paused = false;
+      overlay.classList.remove('visible');
+      setStatus('运行中', '运行中');
+      syncUI();
+    }
+
+    function restartFreshGame() {
+      resetGame();
+      startGame();
+    }
+
+    function syncUI() {
+      scoreEl.textContent = String(score);
+      speedPill.textContent = gameWon ? '已通关' : gameOver ? '已结束' : paused ? '已暂停' : started ? '运行中' : '等待开始';
+    }
+
+    function spawnFood() {
+      const occupied = new Set(snake.map(seg => `${seg.x},${seg.y}`));
+      const empty = [];
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+          if (!occupied.has(`${x},${y}`)) empty.push({ x, y });
+        }
+      }
+      if (empty.length === 0) {
+        food = null;
+        return false;
+      }
+      food = empty[Math.floor(Math.random() * empty.length)];
+      return true;
+    }
+
+    function ensureFood() {
+      return spawnFood();
+    }
+
+    function settleWinIfBoardFilled() {
+      if (gameOver || gameWon) return true;
+      const boardFull = snake.length >= cols * rows;
+      const noFoodSpace = food === null && snake.length < cols * rows;
+      if (!boardFull && !noFoodSpace) return false;
+      gameOver = false;
+      gameWon = true;
+      running = false;
+      paused = false;
+      overlay.classList.add('visible');
+      setOverlayState('通关成功', '棋盘已满，所有格子都被你占领。按回车或点击按钮再来一局。', '再来一局');
+      setStatus('通关成功', '已通关');
+      syncUI();
+      return true;
+    }
+
+    function setOverlayState(title, text, buttonText) {
+      overlayTitle.textContent = title;
+      overlayText.textContent = text;
+      restartBtn.textContent = buttonText;
+    }
+
+    function isReverse(a, b) {
+      return a.x === -b.x && a.y === -b.y;
+    }
+
+    function setStatus(text, accent = text) {
+      statusEl.innerHTML = `状态：<strong>${accent}</strong>${text && text !== accent ? ` · ${text}` : ''}`;
+    }
+
+    function step() {
+      if (!running || paused || gameOver || gameWon || !started) return;
+      if (settleWinIfBoardFilled()) return;
+      const currentDir = dir;
+      dir = nextDir;
+      if (isReverse(dir, currentDir)) {
+        dir = currentDir;
+      }
+      const head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
+      if (head.x < 0 || head.x >= cols || head.y < 0 || head.y >= rows) {
+        endGame('撞到边界');
+        return;
+      }
+      const willGrow = food && head.x === food.x && head.y === food.y;
+      const bodyToCheck = willGrow ? snake : snake.slice(0, -1);
+      if (bodyToCheck.some(seg => seg.x === head.x && seg.y === head.y)) {
+        endGame('撞到自己');
+        return;
+      }
+      snake.unshift(head);
+      if (willGrow) {
+        score += 1;
+        pulse = 12;
+        tickMs = Math.max(82, 135 - score * 2);
+        const hasSpace = ensureFood();
+        if (!hasSpace || settleWinIfBoardFilled()) {
+          return;
+        }
+        setStatus('吃到光点', '分数 +1');
+      } else {
+        snake.pop();
+      }
+      syncUI();
+      settleWinIfBoardFilled();
+    }
+
+    function endGame(reason) {
+      gameOver = reason !== '你已通关';
+      gameWon = reason === '你已通关';
+      running = false;
+      paused = false;
+      overlay.classList.add('visible');
+      setOverlayState(
+        gameWon ? '通关成功' : '游戏结束',
+        gameWon
+          ? '棋盘已满，所有格子都被你占领。按回车或点击按钮再来一局。'
+          : `原因：${reason}。按回车或点击按钮重新开始。`,
+        gameWon ? '再来一局' : '重新开始'
+      );
+      setStatus(gameWon ? '通关成功' : reason, gameWon ? '已通关' : '游戏结束');
+      syncUI();
+    }
+
+    function drawBoard() {
+      const { width, height } = canvas;
+      ctx.clearRect(0, 0, width, height);
+      const bg = ctx.createLinearGradient(0, 0, width, height);
+      bg.addColorStop(0, '#091225');
+      bg.addColorStop(1, '#06101d');
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, width, height);
+
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+          ctx.fillStyle = (x + y) % 2 === 0 ? 'rgba(255,255,255,.03)' : 'rgba(255,255,255,.015)';
+          ctx.fillRect(x * grid, y * grid, grid, grid);
+        }
+      }
+      ctx.strokeStyle = 'rgba(122,167,255,.10)';
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= cols; i++) {
+        ctx.beginPath();
+        ctx.moveTo(i * grid, 0);
+        ctx.lineTo(i * grid, height);
+        ctx.stroke();
+      }
+      for (let i = 0; i <= rows; i++) {
+        ctx.beginPath();
+        ctx.moveTo(0, i * grid);
+        ctx.lineTo(width, i * grid);
+        ctx.stroke();
+      }
+    }
+
+    function drawFood() {
+      const cx = food.x * grid + grid / 2;
+      const cy = food.y * grid + grid / 2;
+      const radius = 5 + Math.sin(pulse / 4) * 1.4;
+      const grad = ctx.createRadialGradient(cx, cy, 1, cx, cy, 10);
+      grad.addColorStop(0, '#fff8d6');
+      grad.addColorStop(0.45, colors[3]);
+      grad.addColorStop(1, 'rgba(255,209,102,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius * 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffd966';
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function drawSnake() {
+      snake.forEach((seg, index) => {
+        const x = seg.x * grid;
+        const y = seg.y * grid;
+        const pad = index === 0 ? 2 : 3;
+        const radius = 7;
+        const grad = ctx.createLinearGradient(x, y, x + grid, y + grid);
+        if (index === 0) {
+          grad.addColorStop(0, '#b9fff0');
+          grad.addColorStop(1, '#67f3c2');
+        } else {
+          const mix = 1 - index / Math.max(1, snake.length - 1);
+          grad.addColorStop(0, `rgba(122,167,255,${0.85 * mix + 0.1})`);
+          grad.addColorStop(1, `rgba(103,243,194,${0.75 * mix + 0.08})`);
+        }
+        ctx.fillStyle = grad;
+        roundRect(x + pad, y + pad, grid - pad * 2, grid - pad * 2, radius);
+        ctx.fill();
+        ctx.strokeStyle = index === 0 ? 'rgba(255,255,255,.4)' : 'rgba(255,255,255,.08)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        if (index === 0) {
+          ctx.fillStyle = '#031118';
+          const eyeOffset = dir.x !== 0 ? 4 : 5;
+          const vertical = dir.x !== 0 ? 5 : 4;
+          ctx.beginPath();
+          ctx.arc(x + grid / 2 + eyeOffset * dir.x - vertical * dir.y, y + grid / 2 - vertical * dir.x - eyeOffset * dir.y, 1.8, 0, Math.PI * 2);
+          ctx.arc(x + grid / 2 + eyeOffset * dir.x + vertical * dir.y, y + grid / 2 + vertical * dir.x - eyeOffset * dir.y, 1.8, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      });
+    }
+
+    function roundRect(x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+    }
+
+    function draw() {
+      drawBoard();
+      if (food) drawFood();
+      drawSnake();
+      if (pulse > 0) pulse -= 1;
+    }
+
+    function loop(ts) {
+      if (!lastTick) lastTick = ts;
+      if (started && !gameOver && !gameWon) {
+        settleWinIfBoardFilled();
+      }
+      if (started && running && !paused && !gameOver && !gameWon && ts - lastTick >= tickMs) {
+        step();
+        lastTick = ts;
+      }
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    function requestStart() {
+      if (!started && !gameOver && !gameWon) {
+        startGame();
+      }
+    }
+
+    function handleDirection(candidate) {
+      if (gameOver || gameWon) return;
+      const activeDir = dir;
+      if (isReverse(candidate, activeDir)) return;
+      nextDir = candidate;
+      requestStart();
+    }
+
+    document.addEventListener('keydown', (event) => {
+      const key = event.key.toLowerCase();
+      if (['arrowup', 'w'].includes(key)) { event.preventDefault(); handleDirection({ x: 0, y: -1 }); return; }
+      if (['arrowdown', 's'].includes(key)) { event.preventDefault(); handleDirection({ x: 0, y: 1 }); return; }
+      if (['arrowleft', 'a'].includes(key)) { event.preventDefault(); handleDirection({ x: -1, y: 0 }); return; }
+      if (['arrowright', 'd'].includes(key)) { event.preventDefault(); handleDirection({ x: 1, y: 0 }); return; }
+      if (key === ' ') {
+        event.preventDefault();
+        if (gameOver || gameWon) return;
+        if (!started) return;
+        paused = !paused;
+        overlay.classList.toggle('visible', paused);
+        if (paused) {
+          setOverlayState('已暂停', '按空格继续，点击按钮继续游戏。', '继续游戏');
+        } else {
+          setOverlayState('运行中', '蛇会在你首次输入合法方向后开始前进。你可以随时按空格暂停或继续。', '开始游戏');
+        }
+        setStatus(paused ? '已暂停' : '运行中', paused ? '暂停中' : '运行中');
+        syncUI();
+        return;
+      }
+      if (key === 'enter' && (gameOver || gameWon)) {
+        restartFreshGame();
+      }
+    });
+
+    restartBtn.addEventListener('click', () => {
+      if (paused) {
+        paused = false;
+        overlay.classList.remove('visible');
+        setStatus('运行中', '运行中');
+        setOverlayState('按任意方向键开始', '蛇会在你首次输入合法方向后开始前进。你可以随时按空格暂停或继续。', '开始游戏');
+        syncUI();
+        return;
+      }
+      if (gameOver || gameWon) {
+        restartFreshGame();
+        return;
+      }
+      startGame();
+    });
+
+    resetGame();
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>

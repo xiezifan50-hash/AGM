@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Contract Proposal Output",
   "type": "object",
+  "additionalProperties": false,
   "required": [
     "summary_zh",
     "features_planned",
@@ -24,6 +25,7 @@
       "type": "array",
       "items": {
         "type": "object",
+        "additionalProperties": false,
         "required": ["feature_id", "title_zh", "reason_zh"],
         "properties": {
           "feature_id": { "type": "string" },
@@ -36,6 +38,7 @@
       "type": "array",
       "items": {
         "type": "object",
+        "additionalProperties": false,
         "required": ["feature_id", "criteria_zh"],
         "properties": {
           "feature_id": { "type": "string" },
@@ -48,6 +51,7 @@
       "type": "array",
       "items": {
         "type": "object",
+        "additionalProperties": false,
         "required": ["check_id", "name_zh", "command", "required"],
         "properties": {
           "check_id": { "type": "string" },
@@ -69,6 +73,7 @@
       "type": "array",
       "items": {
         "type": "object",
+        "additionalProperties": false,
         "required": ["request_id", "reason_zh"],
         "properties": {
           "request_id": { "type": "string" },
