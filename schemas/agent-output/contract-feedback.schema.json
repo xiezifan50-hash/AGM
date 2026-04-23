@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Contract Feedback Output",
+  "type": "object",
+  "required": [
+    "summary_zh",
+    "pass",
+    "issues_zh",
+    "suggested_edits_zh",
+    "challenge_points_zh",
+    "proposed_holistic_acceptance_criteria_zh",
+    "proposed_holistic_fail_conditions_zh",
+    "deferred_concerns_zh"
+  ],
+  "properties": {
+    "summary_zh": { "type": "string" },
+    "pass": { "type": "boolean" },
+    "issues_zh": { "type": "array", "items": { "type": "string" } },
+    "suggested_edits_zh": { "type": "array", "items": { "type": "string" } },
+    "challenge_points_zh": { "type": "array", "items": { "type": "string" } },
+    "proposed_holistic_acceptance_criteria_zh": { "type": "array", "items": { "type": "string" } },
+    "proposed_holistic_fail_conditions_zh": { "type": "array", "items": { "type": "string" } },
+    "deferred_concerns_zh": { "type": "array", "items": { "type": "string" } }
+  }
+}

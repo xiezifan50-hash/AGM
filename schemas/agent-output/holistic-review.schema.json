@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Holistic Review Output",
+  "type": "object",
+  "required": [
+    "pass",
+    "summary_zh",
+    "satisfaction_gaps_zh",
+    "carry_forward_required",
+    "rejected_review_findings",
+    "decision_basis"
+  ],
+  "properties": {
+    "pass": { "type": "boolean" },
+    "summary_zh": { "type": "string" },
+    "satisfaction_gaps_zh": { "type": "array", "items": { "type": "string" } },
+    "carry_forward_required": { "type": "array", "items": { "type": "string" } },
+    "rejected_review_findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["finding_id", "reason_zh"],
+        "properties": {
+          "finding_id": { "type": "string" },
+          "reason_zh": { "type": "string" }
+        }
+      }
+    },
+    "decision_basis": {
+      "type": "object",
+      "required": ["unmet_acceptance_criteria_zh", "triggered_fail_conditions_zh", "emergent_blockers"],
+      "properties": {
+        "unmet_acceptance_criteria_zh": { "type": "array", "items": { "type": "string" } },
+        "triggered_fail_conditions_zh": { "type": "array", "items": { "type": "string" } },
+        "emergent_blockers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["blocker_id", "severity", "reason_zh", "why_now_zh", "should_promote_to_contract", "next_negotiation_hint_zh"],
+            "properties": {
+              "blocker_id": { "type": "string" },
+              "severity": { "type": "string", "enum": ["high", "critical"] },
+              "reason_zh": { "type": "string" },
+              "why_now_zh": { "type": "string" },
+              "should_promote_to_contract": { "type": "boolean" },
+              "next_negotiation_hint_zh": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

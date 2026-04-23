@@ -1,0 +1,25 @@
+[profiles]
+orchestrator = "orchestrator_readonly"
+generator = "generator_execute"
+evaluator = "evaluator"
+reviewer = "reviewer"
+
+[codex]
+binary = "codex"
+search = false
+skip_git_repo_check = true
+
+[negotiation]
+max_rounds = 2
+
+[implementation]
+l1_retry_limit = 3
+check_timeout_seconds = 300
+
+[review]
+max_concurrency = 4
+dimensions = ["correctness", "regression-risk", "api-ux-contract"]
+
+[safety]
+network_access = false
+dangerous_approval_policy = "on-request"

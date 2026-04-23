@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Manifest",
+  "type": "object",
+  "required": [
+    "task_id",
+    "user_request",
+    "latest_sprint",
+    "latest_file",
+    "status",
+    "current_phase",
+    "resume_pointer",
+    "agent_sessions",
+    "human_gate",
+    "review_queue_summary",
+    "timestamps"
+  ],
+  "properties": {
+    "task_id": { "type": "string" },
+    "user_request": { "type": "string" },
+    "latest_sprint": { "type": "integer", "minimum": 1 },
+    "latest_file": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["in_progress", "done", "carry_forward", "blocked", "aborted"]
+    },
+    "current_phase": { "type": "string" },
+    "resume_pointer": {
+      "type": "object",
+      "required": ["phase", "file", "reason_zh"],
+      "properties": {
+        "phase": { "type": "string" },
+        "file": { "type": "string" },
+        "reason_zh": { "type": "string" }
+      }
+    },
+    "agent_sessions": {
+      "type": "object"
+    },
+    "human_gate": {
+      "type": "object",
+      "required": ["active", "reason_zh", "unresolved_points"],
+      "properties": {
+        "active": { "type": "boolean" },
+        "reason_zh": { "type": "string" },
+        "unresolved_points": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "review_queue_summary": {
+      "type": "object",
+      "required": ["queued", "running", "completed", "max_concurrency"],
+      "properties": {
+        "queued": { "type": "integer", "minimum": 0 },
+        "running": { "type": "integer", "minimum": 0 },
+        "completed": { "type": "integer", "minimum": 0 },
+        "max_concurrency": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "timestamps": {
+      "type": "object",
+      "required": ["created_at", "updated_at"],
+      "properties": {
+        "created_at": { "type": "string" },
+        "updated_at": { "type": "string" }
+      }
+    }
+  }
+}

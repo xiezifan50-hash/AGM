@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Event Log Entry",
+  "type": "object",
+  "required": [
+    "timestamp",
+    "task_id",
+    "sprint_id",
+    "phase",
+    "event_type",
+    "actor",
+    "summary_zh",
+    "details"
+  ],
+  "properties": {
+    "timestamp": { "type": "string" },
+    "task_id": { "type": "string" },
+    "sprint_id": { "type": "string" },
+    "phase": { "type": "string" },
+    "event_type": { "type": "string" },
+    "actor": { "type": "string" },
+    "summary_zh": { "type": "string" },
+    "details": { "type": "object" }
+  }
+}

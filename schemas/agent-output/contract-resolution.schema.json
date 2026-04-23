@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Contract Resolution Output",
+  "type": "object",
+  "required": [
+    "summary_zh",
+    "accepted_changes_zh",
+    "rejected_evaluator_requests",
+    "unresolved_points",
+    "resolved_contract"
+  ],
+  "properties": {
+    "summary_zh": { "type": "string" },
+    "accepted_changes_zh": { "type": "array", "items": { "type": "string" } },
+    "rejected_evaluator_requests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["request_id", "reason_zh"],
+        "properties": {
+          "request_id": { "type": "string" },
+          "reason_zh": { "type": "string" }
+        }
+      }
+    },
+    "unresolved_points": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["point_id", "kind", "target_id", "title_zh", "generator_position_zh", "evaluator_position_zh"],
+        "properties": {
+          "point_id": { "type": "string" },
+          "kind": { "type": "string", "enum": ["feature", "global"] },
+          "target_id": { "type": "string" },
+          "title_zh": { "type": "string" },
+          "generator_position_zh": { "type": "string" },
+          "evaluator_position_zh": { "type": "string" }
+        }
+      }
+    },
+    "resolved_contract": { "$ref": "#/$defs/resolvedContract" }
+  },
+  "$defs": {
+    "featurePlan": {
+      "type": "object",
+      "required": ["feature_id", "title_zh", "reason_zh"],
+      "properties": {
+        "feature_id": { "type": "string" },
+        "title_zh": { "type": "string" },
+        "reason_zh": { "type": "string" }
+      }
+    },
+    "acceptanceCriteria": {
+      "type": "object",
+      "required": ["feature_id", "criteria_zh"],
+      "properties": {
+        "feature_id": { "type": "string" },
+        "criteria_zh": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "l1CheckSpec": {
+      "type": "object",
+      "required": ["check_id", "name_zh", "command", "required"],
+      "properties": {
+        "check_id": { "type": "string" },
+        "name_zh": { "type": "string" },
+        "command": { "type": "string" },
+        "required": { "type": "boolean" }
+      }
+    },
+    "rejectedRequest": {
+      "type": "object",
+      "required": ["request_id", "reason_zh"],
+      "properties": {
+        "request_id": { "type": "string" },
+        "reason_zh": { "type": "string" }
+      }
+    },
+    "resolvedContract": {
+      "type": "object",
+      "required": [
+        "summary_zh",
+        "features_planned",
+        "acceptance_criteria",
+        "non_goals_zh",
+        "l1_checks",
+        "review_dimensions",
+        "risks_zh",
+        "user_success_statement_zh",
+        "must_have_features",
+        "nice_to_have_features",
+        "holistic_acceptance_criteria_zh",
+        "holistic_fail_conditions_zh",
+        "deferred_concerns_zh",
+        "rejected_evaluator_requests"
+      ],
+      "properties": {
+        "summary_zh": { "type": "string" },
+        "features_planned": { "type": "array", "items": { "$ref": "#/$defs/featurePlan" } },
+        "acceptance_criteria": { "type": "array", "items": { "$ref": "#/$defs/acceptanceCriteria" } },
+        "non_goals_zh": { "type": "array", "items": { "type": "string" } },
+        "l1_checks": { "type": "array", "items": { "$ref": "#/$defs/l1CheckSpec" } },
+        "review_dimensions": { "type": "array", "items": { "type": "string" } },
+        "risks_zh": { "type": "array", "items": { "type": "string" } },
+        "user_success_statement_zh": { "type": "string" },
+        "must_have_features": { "type": "array", "items": { "type": "string" } },
+        "nice_to_have_features": { "type": "array", "items": { "type": "string" } },
+        "holistic_acceptance_criteria_zh": { "type": "array", "items": { "type": "string" } },
+        "holistic_fail_conditions_zh": { "type": "array", "items": { "type": "string" } },
+        "deferred_concerns_zh": { "type": "array", "items": { "type": "string" } },
+        "rejected_evaluator_requests": { "type": "array", "items": { "$ref": "#/$defs/rejectedRequest" } }
+      }
+    }
+  }
+}
