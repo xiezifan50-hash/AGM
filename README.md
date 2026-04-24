@@ -5,7 +5,7 @@
 ## 当前状态
 
 - 项目阶段：原型可运行。
-- 主体能力：已具备任务创建、项目空间隔离、Sprint 状态持久化、合同协商、串行实现、L1 检查、并行 review、Holistic Review、失败结转、恢复入口、显式停止入口和命令行阶段成果输出。
+- 主体能力：已具备任务创建、项目空间隔离、Sprint 状态持久化、合同协商、串行实现、L1 检查、并行 review、Holistic Review、失败结转、恢复入口、显式暂停/停止入口和命令行阶段成果输出。
 - 最新业务交付：`snake.html` 单文件贪吃蛇网页小游戏已完成，`runs/task-003` 记录显示第 4 个 Sprint 已通过 review 与 Holistic Review，任务状态为 `done`。
 - 测试覆盖：已有 CLI、状态计算、完整编排流程和人工介入恢复相关单元测试。
 
@@ -47,7 +47,7 @@
 8. `REVIEW_PREP` / `PARALLEL_REVIEW`：生成 feature review 和 dimension review，并按配置并发执行。
 9. `REVIEW_AGGREGATE`：聚合 review 结果，存在问题则进入下一轮 Sprint。
 10. `HOLISTIC_REVIEW`：evaluator 按已协商的全局标准做最终审批。
-11. `DONE` / `NEXT_SPRINT_PREP` / `blocked` / `aborted`：完成、结转下一轮、阻塞或人工停止。
+11. `DONE` / `NEXT_SPRINT_PREP` / `blocked` / `paused` / `aborted`：完成、结转下一轮、阻塞、用户软暂停或显式终止。
 
 ## 快速开始
 
@@ -55,6 +55,8 @@
 python3 -m codex_ma init
 python3 -m codex_ma task create --workspace ./project-space "实现一个可恢复的多 agent orchestrator"
 python3 -m codex_ma run task-001
+python3 -m codex_ma pause task-001
+python3 -m codex_ma resume task-001
 python3 -m codex_ma stop task-001
 python3 -m codex_ma status task-001
 ```
@@ -72,7 +74,8 @@ python3 -m codex_ma status task-001
 - `codex-ma doctor`：检查 Codex CLI、profile、schema 和已有任务状态。
 - `codex-ma task create --workspace <path> <用户需求>`：创建任务，可通过 `--task-id` 指定 ID。`--workspace` 必填，内部 agent 只能在该目录内工作。
 - `codex-ma run <task-id>`：运行任务直到完成、阻塞或等待人工输入；运行中会主动输出调研、协商、实现、L1、review、holistic review 和返工决策摘要。
-- `codex-ma resume <task-id>`：从人工暂停点或当前状态继续运行，并继续输出阶段成果摘要。
+- `codex-ma pause <task-id>`：将任务标记为 `paused`，保留当前 phase，后续可通过 `resume` 从原进度继续。
+- `codex-ma resume <task-id>`：从用户暂停点、人工暂停点或当前可恢复状态继续运行，并继续输出阶段成果摘要。
 - `codex-ma stop <task-id>`：将任务标记为 `aborted`，让后续 `run` / `resume` 不再推进；如果已有 runner 正在执行，当前 agent 调用返回后会停止，不会用旧内存状态覆盖停止结果。
 - `codex-ma status <task-id> [--json]`：查看任务状态。
 - `codex-ma events <task-id> [--tail N]`：查看事件流。
@@ -82,7 +85,7 @@ python3 -m codex_ma status task-001
 `run` / `resume` 会在关键阶段完成后打印易读摘要，减少反复手动查询状态：
 
 - 调研阶段：输出 generator / evaluator 的摘要、feature 计划、主要风险与关注点。
-- Negotiate：每轮输出 pass 状态、generator 修订摘要、evaluator 结论、未决点；合同达成后输出 feature 队列和全局验收摘要。
+- Negotiate：每个 agent 子步骤开始和完成时输出进度，包含 proposal、feedback、argue back、resolution；每轮结束后输出 pass 状态、generator 修订摘要、evaluator 结论、未决点；合同达成后输出 feature 队列和全局验收摘要。
 - 实现阶段：每个 feature 完成后输出执行摘要、变更文件、阻塞信息；L1 检查输出通过/失败详情和是否返工。
 - Review：输出 review 队列、每个 review verdict、findings 摘要、聚合结果和建议。
 - Holistic Review：输出最终通过/未通过、满意度缺口、需结转 feature 和下一步。
@@ -96,6 +99,7 @@ python3 -m codex_ma status task-001
 - `[profiles]`：为 `orchestrator`、`generator`、`evaluator`、`reviewer` 指定 Codex profile。
 - `[codex].binary`：Codex CLI 路径，默认 `codex`。
 - `[codex].search`：是否允许 Codex CLI 使用搜索。
+- `[codex].agent_timeout_seconds`：单次 `codex exec` agent 调用超时时间，默认 900 秒。
 - `[negotiation].max_rounds`：合同协商最大轮数。
 - `[implementation].l1_retry_limit`：L1 检查失败后的最大重试次数。
 - `[implementation].check_timeout_seconds`：L1 shell 检查超时时间。
@@ -107,7 +111,7 @@ python3 -m codex_ma status task-001
 
 每个任务必须绑定一个 project workspace。编排器在 `runs/<task-id>/` 保存任务状态：
 
-- `manifest.json`：任务级状态、当前阶段、恢复指针、agent session、review 队列摘要。
+- `manifest.json`：任务级状态、当前阶段、恢复指针、agent session、review 队列摘要；`status` 可为 `in_progress`、`paused`、`blocked`、`done`、`aborted` 等。
 - `sprint-001.json` 等：Sprint 级合同、实现、review、Holistic Review 和下一轮继承信息。
 - `events.jsonl`：按时间追加的事件日志。
 
@@ -148,6 +152,12 @@ python3 -m unittest discover -s tests -v
 - 当前代码侧已实现多 Agent Sprint 编排核心闭环，后续重点可放在真实场景稳定性、运行态清理策略、更多端到端示例和更细的失败恢复体验。
 
 ## 更新日志
+
+### 2026-04-24
+
+- 新增 `codex-ma pause <task-id>`，支持将任务软暂停为 `paused` 并在后续通过 `resume` 从原 phase 继续。
+- 新增 `[codex].agent_timeout_seconds`，默认 900 秒，避免单次 `codex exec` agent 调用无限阻塞。
+- 增强 Negotiate 进度输出：proposal、feedback、argue back、resolution 每个子步骤开始和完成时都会打印阶段日志，便于定位卡住的 agent 调用。
 
 ### 2026-04-23
 

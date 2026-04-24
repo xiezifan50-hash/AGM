@@ -23,7 +23,7 @@
     "latest_file": { "type": "string" },
     "status": {
       "type": "string",
-      "enum": ["in_progress", "done", "carry_forward", "blocked", "aborted"]
+      "enum": ["in_progress", "paused", "done", "carry_forward", "blocked", "aborted"]
     },
     "current_phase": { "type": "string" },
     "resume_pointer": {

@@ -24,7 +24,7 @@
     "sprint_number": { "type": "integer", "minimum": 1 },
     "status": {
       "type": "string",
-      "enum": ["in_progress", "done", "carry_forward", "blocked", "aborted"]
+      "enum": ["in_progress", "paused", "done", "carry_forward", "blocked", "aborted"]
     },
     "phase": { "type": "string" },
     "user_request": { "type": "string" },

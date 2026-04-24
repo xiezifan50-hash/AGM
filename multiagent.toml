@@ -8,6 +8,7 @@ reviewer = "reviewer"
 binary = "codex"
 search = false
 skip_git_repo_check = true
+agent_timeout_seconds = 900
 
 [negotiation]
 max_rounds = 2

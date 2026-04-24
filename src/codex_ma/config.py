@@ -14,6 +14,7 @@ class CodexConfig:
     binary: str = "codex"
     search: bool = False
     skip_git_repo_check: bool = True
+    agent_timeout_seconds: int = 900
 
 
 @dataclass(slots=True)
@@ -119,6 +120,7 @@ def load_config(root: Path) -> ProjectConfig:
             binary=str(codex_data.get("binary", "codex")),
             search=bool(codex_data.get("search", False)),
             skip_git_repo_check=bool(codex_data.get("skip_git_repo_check", True)),
+            agent_timeout_seconds=int(codex_data.get("agent_timeout_seconds", 900)),
         ),
         negotiation=NegotiationConfig(
             max_rounds=int(negotiation_data.get("max_rounds", 2))
@@ -154,6 +156,7 @@ reviewer = "reviewer"
 binary = "codex"
 search = false
 skip_git_repo_check = true
+agent_timeout_seconds = 900
 
 [negotiation]
 max_rounds = 2

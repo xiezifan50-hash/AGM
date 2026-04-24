@@ -30,6 +30,12 @@ class CliTests(WorkspaceTestCase):
         self.assertEqual(rc, 0)
         self.assertTrue((self.workspace / "runs" / "task-123" / "manifest.json").exists())
 
+        pause_args = Namespace(command="pause", task_id="task-123")
+        rc = dispatch(pause_args, self.workspace, storage, config)
+        self.assertEqual(rc, 0)
+        manifest = storage.load_manifest("task-123")
+        self.assertEqual(manifest["status"], "paused")
+
         stop_args = Namespace(command="stop", task_id="task-123")
         rc = dispatch(stop_args, self.workspace, storage, config)
         self.assertEqual(rc, 0)

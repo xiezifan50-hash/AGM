@@ -33,6 +33,7 @@ PHASES = (
 )
 
 STATUS_IN_PROGRESS = "in_progress"
+STATUS_PAUSED = "paused"
 STATUS_DONE = "done"
 STATUS_CARRY_FORWARD = "carry_forward"
 STATUS_BLOCKED = "blocked"
@@ -40,6 +41,7 @@ STATUS_ABORTED = "aborted"
 
 TASK_STATUSES = (
     STATUS_IN_PROGRESS,
+    STATUS_PAUSED,
     STATUS_DONE,
     STATUS_CARRY_FORWARD,
     STATUS_BLOCKED,

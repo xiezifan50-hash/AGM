@@ -34,6 +34,9 @@ def build_parser() -> ArgumentParser:
     run_parser = subparsers.add_parser("run", help="运行任务直到暂停或完成")
     run_parser.add_argument("task_id")
 
+    pause_parser = subparsers.add_parser("pause", help="软暂停任务")
+    pause_parser.add_argument("task_id")
+
     resume_parser = subparsers.add_parser("resume", help="恢复任务")
     resume_parser.add_argument("task_id")
 
@@ -87,6 +90,11 @@ def dispatch(args: Namespace, root: Path, storage: Storage, config: Any) -> int:
     if args.command == "stop":
         orchestrator = Orchestrator(root, storage, None, config)
         result = orchestrator.stop(args.task_id)
+        print(render_status(result["manifest"], result["sprint"]))
+        return 0
+    if args.command == "pause":
+        orchestrator = Orchestrator(root, storage, None, config)
+        result = orchestrator.pause(args.task_id)
         print(render_status(result["manifest"], result["sprint"]))
         return 0
     runner = build_runner(root, config)

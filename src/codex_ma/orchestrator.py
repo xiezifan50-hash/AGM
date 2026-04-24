@@ -4,7 +4,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from threading import Lock
 from typing import Any, Callable
-import json
 import os
 import re
 import subprocess
@@ -35,9 +34,10 @@ from codex_ma.constants import (
     STATUS_CARRY_FORWARD,
     STATUS_DONE,
     STATUS_IN_PROGRESS,
+    STATUS_PAUSED,
 )
 from codex_ma.prompts import build_prompt
-from codex_ma.runner import BaseRunner, RunnerError, RunnerRequest, RunnerResult
+from codex_ma.runner import AgentTimeoutError, BaseRunner, RunnerError, RunnerRequest, RunnerResult
 from codex_ma.schema import load_schema, validate
 from codex_ma.state import (
     build_holistic_rubric,
@@ -148,7 +148,7 @@ class Orchestrator:
         try:
             while True:
                 manifest, sprint = self._load_current(task_id)
-                if manifest["status"] in (STATUS_DONE, STATUS_BLOCKED, STATUS_ABORTED):
+                if manifest["status"] in (STATUS_DONE, STATUS_BLOCKED, STATUS_ABORTED, STATUS_PAUSED):
                     return {"manifest": manifest, "sprint": sprint}
                 phase = sprint["phase"]
                 try:
@@ -200,9 +200,49 @@ class Orchestrator:
         manifest, sprint = self._load_current(task_id)
         if manifest["status"] in (STATUS_DONE, STATUS_BLOCKED, STATUS_ABORTED):
             return {"manifest": manifest, "sprint": sprint}
+        if manifest["status"] == STATUS_PAUSED:
+            manifest["status"] = STATUS_IN_PROGRESS
+            sprint["status"] = STATUS_IN_PROGRESS
+            # Resume needs to commit the status flip before normal state-guarded
+            # saves run again, otherwise the persisted paused status would block itself.
+            self.storage.save_sprint(task_id, sprint)
+            self.storage.save_manifest(task_id, manifest)
         if sprint["phase"] == PHASE_AWAITING_HUMAN:
             self._collect_human_input(task_id, manifest, sprint, input_func, output_func)
         return self.run(task_id, progress_func=progress_func)
+
+    def pause(self, task_id: str, reason_zh: str = "用户请求暂停任务。") -> dict[str, Any]:
+        manifest, sprint = self._load_current(task_id)
+        if manifest["status"] in (STATUS_DONE, STATUS_BLOCKED, STATUS_ABORTED, STATUS_PAUSED):
+            return {"manifest": manifest, "sprint": sprint}
+        manifest["status"] = STATUS_PAUSED
+        sprint["status"] = STATUS_PAUSED
+        sprint["resume_from"] = {
+            "phase": sprint["phase"],
+            "pending_actor": None,
+            "reason_zh": "任务已暂停，等待 resume 后继续。",
+        }
+        manifest["resume_pointer"] = {
+            "phase": sprint["phase"],
+            "file": f"runs/{task_id}/sprint-{sprint['sprint_number']:03d}.json",
+            "reason_zh": reason_zh,
+        }
+        if sprint["phase"] != PHASE_AWAITING_HUMAN:
+            manifest["human_gate"] = {
+                "active": False,
+                "reason_zh": "",
+                "unresolved_points": [],
+            }
+        self._save_state(task_id, manifest, sprint)
+        self._append_event(
+            task_id,
+            sprint,
+            "TASK_PAUSED",
+            "orchestrator",
+            reason_zh,
+            {"status": STATUS_PAUSED},
+        )
+        return {"manifest": manifest, "sprint": sprint}
 
     def stop(self, task_id: str, reason_zh: str = "用户请求停止任务。") -> dict[str, Any]:
         manifest, sprint = self._load_current(task_id)
@@ -283,7 +323,7 @@ class Orchestrator:
         manifest: dict[str, Any],
         sprint: dict[str, Any],
     ) -> None:
-        self._raise_if_stopped(task_id, manifest)
+        self._raise_if_not_runnable(task_id, manifest)
         manifest["latest_sprint"] = sprint["sprint_number"]
         manifest["latest_file"] = f"runs/{task_id}/sprint-{sprint['sprint_number']:03d}.json"
         manifest["current_phase"] = sprint["phase"]
@@ -291,11 +331,11 @@ class Orchestrator:
         self.storage.save_sprint(task_id, sprint)
         self.storage.save_manifest(task_id, manifest)
 
-    def _raise_if_stopped(self, task_id: str, manifest: dict[str, Any]) -> None:
-        if manifest.get("status") == STATUS_ABORTED:
+    def _raise_if_not_runnable(self, task_id: str, manifest: dict[str, Any]) -> None:
+        if manifest.get("status") in (STATUS_ABORTED, STATUS_PAUSED):
             return
         current = self.storage.load_manifest(task_id)
-        if current.get("status") == STATUS_ABORTED:
+        if current.get("status") in (STATUS_ABORTED, STATUS_PAUSED):
             raise TaskStopped
 
     def _workspace_run_dir(self, manifest: dict[str, Any], task_id: str) -> Path:
@@ -448,8 +488,32 @@ class Orchestrator:
             logical_session=logical_session,
             session_id=session_info.get("session_id"),
         )
-        result = self.runner.run(request)
-        self._raise_if_stopped(task_id, manifest)
+        try:
+            result = self.runner.run(request)
+        except AgentTimeoutError as exc:
+            sprint["status"] = STATUS_BLOCKED
+            manifest["status"] = STATUS_BLOCKED
+            manifest["resume_pointer"] = {
+                "phase": sprint["phase"],
+                "file": f"runs/{task_id}/sprint-{sprint['sprint_number']:03d}.json",
+                "reason_zh": f"{role} 执行 {action} 超时。",
+            }
+            self._save_state(task_id, manifest, sprint)
+            self._append_event(
+                task_id,
+                sprint,
+                "AGENT_CALL_TIMED_OUT",
+                role,
+                f"{role} 执行 {action} 超时，任务已阻塞。",
+                {
+                    "action": action,
+                    "logical_session": logical_session,
+                    "artifact": self._workspace_relative(manifest, output_path),
+                    "error": str(exc),
+                },
+            )
+            raise
+        self._raise_if_not_runnable(task_id, manifest)
         validate(result.payload, load_schema(validation_schema_path))
         self._assert_payload_within_workspace(manifest, result.payload)
         with self._state_lock:
@@ -588,6 +652,10 @@ class Orchestrator:
             "previous_rounds": rounds,
             "human_intervention": contract["human_intervention"],
         }
+        self._emit_progress(
+            f"Negotiate 第 {round_number} 轮: Generator 提案开始",
+            ["动作: GENERATOR_PROPOSAL"],
+        )
         proposal = self._invoke_agent(
             task_id=task_id,
             manifest=manifest,
@@ -602,6 +670,24 @@ class Orchestrator:
             scope="contract",
             notes_zh="负责合同调研与提案。",
         ).payload
+        self._emit_progress(
+            f"Negotiate 第 {round_number} 轮: Generator 提案完成",
+            [
+                f"摘要: {self._short_text(proposal.get('summary_zh'))}",
+                "计划 features: "
+                + self._format_items(
+                    [
+                        f"{item.get('feature_id')} / {item.get('title_zh')}"
+                        for item in proposal.get("features_planned", [])
+                    ],
+                    limit=5,
+                ),
+            ],
+        )
+        self._emit_progress(
+            f"Negotiate 第 {round_number} 轮: Evaluator 反馈开始",
+            ["动作: EVALUATOR_FEEDBACK"],
+        )
         feedback = self._invoke_agent(
             task_id=task_id,
             manifest=manifest,
@@ -619,6 +705,18 @@ class Orchestrator:
             scope="contract",
             notes_zh="负责合同调研、协商与 holistic 审批。",
         ).payload
+        self._emit_progress(
+            f"Negotiate 第 {round_number} 轮: Evaluator 反馈完成",
+            [
+                f"结论: {'通过' if feedback.get('pass') else '需修订'}",
+                f"摘要: {self._short_text(feedback.get('summary_zh'))}",
+                "问题: " + self._format_items(feedback.get("issues_zh", []), limit=4),
+            ],
+        )
+        self._emit_progress(
+            f"Negotiate 第 {round_number} 轮: Generator 修订开始",
+            ["动作: GENERATOR_ARGUE_BACK"],
+        )
         resolution = self._invoke_agent(
             task_id=task_id,
             manifest=manifest,
@@ -637,6 +735,25 @@ class Orchestrator:
             scope="contract",
             notes_zh="负责合同调研与提案。",
         ).payload
+        self._emit_progress(
+            f"Negotiate 第 {round_number} 轮: Generator 修订完成",
+            [
+                f"摘要: {self._short_text(resolution.get('summary_zh'))}",
+                "已接受变更: " + self._format_items(resolution.get("accepted_changes_zh", []), limit=4),
+                "未决点: "
+                + self._format_items(
+                    [
+                        item.get("title_zh", item.get("point_id", ""))
+                        for item in resolution.get("unresolved_points", [])
+                    ],
+                    limit=4,
+                ),
+            ],
+        )
+        self._emit_progress(
+            f"Negotiate 第 {round_number} 轮: Evaluator 终审开始",
+            ["动作: EVALUATOR_RESOLUTION"],
+        )
         evaluator_resolution = self._invoke_agent(
             task_id=task_id,
             manifest=manifest,
@@ -656,6 +773,14 @@ class Orchestrator:
             scope="contract",
             notes_zh="负责合同调研、协商与 holistic 审批。",
         ).payload
+        self._emit_progress(
+            f"Negotiate 第 {round_number} 轮: Evaluator 终审完成",
+            [
+                f"结论: {'通过' if evaluator_resolution.get('pass') else '未通过'}",
+                f"摘要: {self._short_text(evaluator_resolution.get('summary_zh'))}",
+                "问题: " + self._format_items(evaluator_resolution.get("issues_zh", []), limit=4),
+            ],
+        )
         resolved_contract = resolution["resolved_contract"]
         unresolved_points = resolution.get("unresolved_points", [])
         holistic_rubric = build_holistic_rubric(resolved_contract)

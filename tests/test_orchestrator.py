@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from testlib import WorkspaceTestCase
 from codex_ma.orchestrator import WorkspaceViolation
-from codex_ma.runner import BaseRunner, RunnerRequest, RunnerResult
+from codex_ma.runner import AgentTimeoutError, BaseRunner, RunnerRequest, RunnerResult
 
 
 class CallbackRunner(BaseRunner):
@@ -18,6 +18,13 @@ class CallbackRunner(BaseRunner):
             payload=self.payload,
             session_id="callback-session",
             command=["callback-runner", request.action],
+        )
+
+
+class TimeoutRunner(BaseRunner):
+    def run(self, request: RunnerRequest) -> RunnerResult:
+        raise AgentTimeoutError(
+            f"Codex command timed out for action={request.action} role={request.role}"
         )
 
 
@@ -136,6 +143,71 @@ class OrchestratorTests(WorkspaceTestCase):
         events = orchestrator.events("task-stop")
         self.assertEqual(events[-1]["event_type"], "TASK_STOPPED")
 
+    def test_pause_marks_task_paused_and_resume_continues(self) -> None:
+        contract = make_contract()
+        scenario = {
+            "steps": [
+                {"match": {"action": "GENERATOR_RESEARCH"}, "payload": contract, "session_id": "gen-contract"},
+                {"match": {"action": "EVALUATOR_RESEARCH"}, "payload": make_feedback(False, "先提出协商基线"), "session_id": "eval-contract"},
+                {"match": {"action": "GENERATOR_PROPOSAL"}, "payload": contract, "session_id": "gen-contract"},
+                {"match": {"action": "EVALUATOR_FEEDBACK"}, "payload": make_feedback(False, "需要补齐 wording"), "session_id": "eval-contract"},
+                {"match": {"action": "GENERATOR_ARGUE_BACK"}, "payload": make_resolution(contract), "session_id": "gen-contract"},
+                {"match": {"action": "EVALUATOR_RESOLUTION"}, "payload": make_feedback(True), "session_id": "eval-contract"},
+                {
+                    "match": {"action": "FEATURE_EXECUTION", "logical_session": "generator_feature_core"},
+                    "payload": {
+                        "summary_zh": "已完成核心功能实现",
+                        "research_summary_zh": "确认实现路径",
+                        "execution_summary_zh": "写入核心逻辑",
+                        "status": "in_progress",
+                        "changed_files": ["app.py"],
+                        "blockers_zh": []
+                    },
+                    "session_id": "gen-core"
+                },
+                {
+                    "match": {"action": "FEATURE_REVIEW", "logical_session": "reviewer_feature_core"},
+                    "payload": make_review("feature-core", "feature", "core"),
+                    "session_id": "review-core"
+                },
+                {
+                    "match": {"action": "DIMENSION_REVIEW", "logical_session": "reviewer_dimension_correctness"},
+                    "payload": make_review("dimension-correctness", "dimension", "correctness"),
+                    "session_id": "review-dim-1"
+                },
+                {
+                    "match": {"action": "DIMENSION_REVIEW", "logical_session": "reviewer_dimension_regression-risk"},
+                    "payload": make_review("dimension-regression-risk", "dimension", "regression-risk"),
+                    "session_id": "review-dim-2"
+                },
+                {
+                    "match": {"action": "DIMENSION_REVIEW", "logical_session": "reviewer_dimension_api-ux-contract"},
+                    "payload": make_review("dimension-api-ux-contract", "dimension", "api-ux-contract"),
+                    "session_id": "review-dim-3"
+                },
+                {"match": {"action": "HOLISTIC_REVIEW"}, "payload": make_holistic(True), "session_id": "eval-holistic"}
+            ]
+        }
+        orchestrator = self.make_orchestrator(scenario)
+        orchestrator.init_workspace()
+        orchestrator.create_task("实现核心功能", "task-pause", self.workspace_path())
+
+        paused = orchestrator.pause("task-pause")
+        self.assertEqual(paused["manifest"]["status"], "paused")
+        self.assertEqual(paused["sprint"]["status"], "paused")
+        self.assertEqual(paused["sprint"]["phase"], "INIT")
+
+        result = orchestrator.run("task-pause")
+        self.assertEqual(result["manifest"]["status"], "paused")
+        self.assertEqual(result["sprint"]["phase"], "INIT")
+
+        resumed = orchestrator.resume("task-pause")
+        self.assertEqual(resumed["manifest"]["status"], "done")
+        self.assertEqual(resumed["sprint"]["phase"], "DONE")
+
+        events = orchestrator.events("task-pause")
+        self.assertIn("TASK_PAUSED", [event["event_type"] for event in events])
+
     def test_workspace_must_not_be_tool_root(self) -> None:
         orchestrator = self.make_orchestrator({"steps": []})
         orchestrator.init_workspace()
@@ -169,6 +241,36 @@ class OrchestratorTests(WorkspaceTestCase):
         result = orchestrator.run("task-stop-race")
         self.assertEqual(result["manifest"]["status"], "aborted")
         self.assertIsNone(result["sprint"]["contract"]["generator_research"])
+
+    def test_pause_during_agent_call_is_not_overwritten(self) -> None:
+        orchestrator = self.make_orchestrator()
+        orchestrator.init_workspace()
+        orchestrator.create_task("实现核心功能", "task-pause-race", self.workspace_path())
+        runner = CallbackRunner(
+            make_contract(),
+            lambda: orchestrator.pause("task-pause-race"),
+        )
+        orchestrator.runner = runner
+
+        result = orchestrator.run("task-pause-race")
+        self.assertEqual(result["manifest"]["status"], "paused")
+        self.assertEqual(result["sprint"]["status"], "paused")
+        self.assertIsNone(result["sprint"]["contract"]["generator_research"])
+
+    def test_agent_timeout_marks_task_blocked(self) -> None:
+        orchestrator = self.make_orchestrator()
+        orchestrator.init_workspace()
+        orchestrator.create_task("实现核心功能", "task-timeout", self.workspace_path())
+        orchestrator.runner = TimeoutRunner()
+
+        with self.assertRaises(AgentTimeoutError):
+            orchestrator.run("task-timeout")
+
+        result = orchestrator.status("task-timeout")
+        self.assertEqual(result["manifest"]["status"], "blocked")
+        self.assertEqual(result["sprint"]["status"], "blocked")
+        events = orchestrator.events("task-timeout")
+        self.assertEqual(events[-1]["event_type"], "AGENT_CALL_TIMED_OUT")
 
     def test_full_run_reaches_done(self) -> None:
         contract = make_contract()
@@ -262,6 +364,10 @@ class OrchestratorTests(WorkspaceTestCase):
 
         output = "\n".join(messages)
         self.assertIn("Generator 调研完成", output)
+        self.assertIn("Negotiate 第 1 轮: Generator 提案开始", output)
+        self.assertIn("Negotiate 第 1 轮: Evaluator 反馈完成", output)
+        self.assertIn("Negotiate 第 1 轮: Generator 修订开始", output)
+        self.assertIn("Negotiate 第 1 轮: Evaluator 终审完成", output)
         self.assertIn("合同已接受", output)
         self.assertIn("L1 检查通过", output)
         self.assertIn("Review 聚合通过", output)

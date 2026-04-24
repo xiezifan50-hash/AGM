@@ -16,6 +16,10 @@ class RunnerError(RuntimeError):
     pass
 
 
+class AgentTimeoutError(RunnerError):
+    pass
+
+
 @dataclass(slots=True)
 class RunnerRequest:
     role: str
@@ -86,13 +90,20 @@ class CodexRunner(BaseRunner):
     def run(self, request: RunnerRequest) -> RunnerResult:
         request.output_path.parent.mkdir(parents=True, exist_ok=True)
         cmd = self._build_command(request)
-        proc = subprocess.run(
-            cmd,
-            cwd=request.cwd,
-            input=request.prompt,
-            text=True,
-            capture_output=True,
-        )
+        try:
+            proc = subprocess.run(
+                cmd,
+                cwd=request.cwd,
+                input=request.prompt,
+                text=True,
+                capture_output=True,
+                timeout=self.config.codex.agent_timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise AgentTimeoutError(
+                f"Codex command timed out after {self.config.codex.agent_timeout_seconds}s "
+                f"for action={request.action} role={request.role}"
+            ) from exc
         if proc.returncode != 0:
             raise RunnerError(
                 f"Codex command failed with exit code {proc.returncode}: {proc.stderr.strip() or proc.stdout.strip()}"
