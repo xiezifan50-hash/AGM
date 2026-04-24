@@ -4,10 +4,9 @@ from argparse import ArgumentParser, Namespace
 from pathlib import Path
 from typing import Any
 import json
-import shutil
 import sys
 
-from codex_ma.config import codex_profile_exists, load_config, resolve_codex_binary
+from codex_ma.config import load_config, resolve_codex_binary
 from codex_ma.orchestrator import Orchestrator
 from codex_ma.runner import RunnerError, build_runner
 from codex_ma.storage import Storage
@@ -132,10 +131,12 @@ def run_doctor(root: Path, storage: Storage, config: Any) -> int:
     checks: list[tuple[str, bool, str]] = []
     resolved_binary = resolve_codex_binary(config.codex.binary)
     checks.append(("codex binary", resolved_binary is not None, resolved_binary or config.codex.binary))
-    for role, profile in sorted(config.profiles.items()):
-        exists = codex_profile_exists(profile)
-        detail = profile if exists else f"{profile} (未找到，运行时将回退到内置 sandbox/approval)"
-        checks.append((f"profile:{role}", True, detail))
+    for role, agent in sorted(config.agents.items()):
+        detail = (
+            f"model={agent.model}, reasoning={agent.reasoning_effort}, "
+            f"sandbox={agent.sandbox}, approval={agent.approval_policy}, search={agent.search}"
+        )
+        checks.append((f"agent:{role}", True, detail))
     checks.append(("multiagent.toml", (root / "multiagent.toml").exists(), "配置文件"))
     checks.append(("schemas", (root / "schemas").exists(), "schema 目录"))
     checks.append(("runs", (root / "runs").exists(), "运行目录"))

@@ -9,7 +9,7 @@ import os
 import re
 import subprocess
 
-from codex_ma.config import ProjectConfig, codex_profile_exists, resolve_codex_binary
+from codex_ma.config import AgentConfig, ProjectConfig, resolve_codex_binary
 
 
 class RunnerError(RuntimeError):
@@ -29,7 +29,6 @@ class RunnerRequest:
     schema_path: Path
     output_path: Path
     cwd: Path
-    profile: str
     logical_session: str
     session_id: str | None = None
 
@@ -132,10 +131,8 @@ class CodexRunner(BaseRunner):
         # already injects all durable context from sprint state, so v1 keeps
         # calls schema-safe by starting a fresh non-interactive exec per phase.
         cmd = [binary, "exec", "-C", str(request.cwd)]
-        if codex_profile_exists(request.profile):
-            cmd.extend(["-p", request.profile])
-        else:
-            cmd.extend(self._fallback_role_flags(request))
+        agent = self.config.agents.get(request.role, AgentConfig())
+        cmd.extend(self._agent_flags(agent))
         cmd.extend(
             [
                 "--output-schema",
@@ -145,19 +142,29 @@ class CodexRunner(BaseRunner):
                 str(request.output_path),
             ]
         )
-        if self.config.codex.search:
+        if self.config.codex.search or agent.search:
             cmd.append("--search")
         if self.config.codex.skip_git_repo_check:
             cmd.append("--skip-git-repo-check")
         cmd.append("-")
         return cmd
 
-    def _fallback_role_flags(self, request: RunnerRequest) -> list[str]:
-        if request.role == "generator":
-            return ["-s", "workspace-write", "-a", "on-request"]
-        if request.role in {"evaluator", "reviewer", "orchestrator"}:
-            return ["-s", "read-only", "-a", "never"]
-        return []
+    def _agent_flags(self, agent: AgentConfig) -> list[str]:
+        flags: list[str] = []
+        if agent.model:
+            flags.extend(["-m", agent.model])
+        if agent.sandbox:
+            flags.extend(["-s", agent.sandbox])
+        if agent.approval_policy:
+            flags.extend(["-a", agent.approval_policy])
+        if agent.reasoning_effort:
+            flags.extend(
+                [
+                    "-c",
+                    f'model_reasoning_effort="{_toml_string(agent.reasoning_effort)}"',
+                ]
+            )
+        return flags
 
 
 def build_runner(root: Path, config: ProjectConfig) -> BaseRunner:
@@ -210,3 +217,7 @@ def _extract_session_id(events: list[dict[str, Any]]) -> str | None:
         if found:
             return found
     return None
+
+
+def _toml_string(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')

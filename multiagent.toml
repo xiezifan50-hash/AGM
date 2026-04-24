@@ -1,8 +1,30 @@
-[profiles]
-orchestrator = "orchestrator_readonly"
-generator = "generator_execute"
-evaluator = "evaluator"
-reviewer = "reviewer"
+[agents.orchestrator]
+model = "gpt-5.4-mini"
+reasoning_effort = "low"
+sandbox = "read-only"
+approval_policy = "never"
+search = false
+
+[agents.generator]
+model = "gpt-5.3-codex"
+reasoning_effort = "medium"
+sandbox = "workspace-write"
+approval_policy = "on-request"
+search = false
+
+[agents.evaluator]
+model = "gpt-5.4"
+reasoning_effort = "medium"
+sandbox = "read-only"
+approval_policy = "never"
+search = false
+
+[agents.reviewer]
+model = "gpt-5.4-mini"
+reasoning_effort = "medium"
+sandbox = "read-only"
+approval_policy = "never"
+search = false
 
 [codex]
 binary = "codex"
@@ -19,7 +41,6 @@ check_timeout_seconds = 300
 
 [review]
 max_concurrency = 4
-dimensions = ["correctness", "regression-risk", "api-ux-contract"]
 
 [safety]
 network_access = false

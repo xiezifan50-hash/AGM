@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from testlib import WorkspaceTestCase
 
-from codex_ma.config import CodexConfig, ProjectConfig
+from codex_ma.config import AgentConfig, CodexConfig, ProjectConfig
 from codex_ma.runner import CodexRunner, RunnerError, RunnerRequest
 
 
@@ -24,7 +24,6 @@ class RunnerTests(WorkspaceTestCase):
             schema_path=Path("schema.json"),
             output_path=self.workspace / "output.json",
             cwd=self.workspace,
-            profile="missing-profile",
             logical_session="generator_contract",
         )
 
@@ -35,3 +34,37 @@ class RunnerTests(WorkspaceTestCase):
 
         self.assertIn("timed out after 120s", str(raised.exception))
         self.assertIn("action=GENERATOR_ARGUE_BACK", str(raised.exception))
+
+    def test_codex_runner_uses_project_agent_config_without_profile(self) -> None:
+        config = ProjectConfig(
+            codex=CodexConfig(binary="/bin/echo"),
+            agents={
+                "generator": AgentConfig(
+                    model="gpt-5.3-codex",
+                    reasoning_effort="medium",
+                    sandbox="workspace-write",
+                    approval_policy="on-request",
+                    search=True,
+                )
+            },
+        )
+        runner = CodexRunner(config)
+        request = RunnerRequest(
+            role="generator",
+            phase="IMPLEMENTING",
+            action="FEATURE_EXECUTION",
+            prompt="{}",
+            schema_path=Path("schema.json"),
+            output_path=self.workspace / "output.json",
+            cwd=self.workspace,
+            logical_session="generator_feature_core",
+        )
+
+        cmd = runner._build_command(request)
+
+        self.assertNotIn("-p", cmd)
+        self.assertIn("gpt-5.3-codex", cmd)
+        self.assertIn("workspace-write", cmd)
+        self.assertIn("on-request", cmd)
+        self.assertIn('model_reasoning_effort="medium"', cmd)
+        self.assertIn("--search", cmd)

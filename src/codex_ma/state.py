@@ -7,7 +7,6 @@ import copy
 import re
 
 from codex_ma.constants import (
-    DEFAULT_DIMENSIONS,
     PHASE_INIT,
     STATUS_IN_PROGRESS,
 )

@@ -4,9 +4,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 import shutil
+
 import tomllib
 
-from codex_ma.constants import DEFAULT_DIMENSIONS, DEFAULT_ROLE_PROFILES
+from codex_ma.constants import DEFAULT_ROLE_AGENTS
 
 
 @dataclass(slots=True)
@@ -15,6 +16,15 @@ class CodexConfig:
     search: bool = False
     skip_git_repo_check: bool = True
     agent_timeout_seconds: int = 900
+
+
+@dataclass(slots=True)
+class AgentConfig:
+    model: str = "gpt-5.4-mini"
+    reasoning_effort: str = "low"
+    sandbox: str = "read-only"
+    approval_policy: str = "never"
+    search: bool = False
 
 
 @dataclass(slots=True)
@@ -31,7 +41,6 @@ class ImplementationConfig:
 @dataclass(slots=True)
 class ReviewConfig:
     max_concurrency: int = 4
-    dimensions: tuple[str, ...] = field(default_factory=lambda: DEFAULT_DIMENSIONS)
 
 
 @dataclass(slots=True)
@@ -47,7 +56,7 @@ class ProjectConfig:
     implementation: ImplementationConfig = field(default_factory=ImplementationConfig)
     review: ReviewConfig = field(default_factory=ReviewConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
-    profiles: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_ROLE_PROFILES))
+    agents: dict[str, AgentConfig] = field(default_factory=lambda: _default_agents())
 
 
 def resolve_codex_binary(configured_binary: str) -> str | None:
@@ -76,32 +85,35 @@ def resolve_codex_binary(configured_binary: str) -> str | None:
     return None
 
 
-def codex_profile_exists(profile_name: str) -> bool:
-    if not profile_name:
-        return False
-    config_path = Path("~/.codex/config.toml").expanduser()
-    if not config_path.exists():
-        return False
-    try:
-        data = tomllib.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError):
-        return False
-    profiles = data.get("profiles", {})
-    return isinstance(profiles, dict) and profile_name in profiles
+def _default_agents() -> dict[str, AgentConfig]:
+    return {
+        role: AgentConfig(
+            model=str(data["model"]),
+            reasoning_effort=str(data["reasoning_effort"]),
+            sandbox=str(data["sandbox"]),
+            approval_policy=str(data["approval_policy"]),
+            search=bool(data["search"]),
+        )
+        for role, data in DEFAULT_ROLE_AGENTS.items()
+    }
 
 
-def _as_tuple(value: Any, default: tuple[str, ...]) -> tuple[str, ...]:
-    if isinstance(value, (list, tuple)):
-        return tuple(str(item) for item in value)
-    return default
-
-
-def _as_dict(value: Any) -> dict[str, str]:
+def _as_agents(value: Any) -> dict[str, AgentConfig]:
+    merged = _default_agents()
     if not isinstance(value, dict):
-        return dict(DEFAULT_ROLE_PROFILES)
-    merged = dict(DEFAULT_ROLE_PROFILES)
-    for key, raw in value.items():
-        merged[str(key)] = str(raw)
+        return merged
+    for role, raw in value.items():
+        role_key = str(role)
+        base = merged.get(role_key, AgentConfig())
+        if not isinstance(raw, dict):
+            continue
+        merged[role_key] = AgentConfig(
+            model=str(raw.get("model", base.model)),
+            reasoning_effort=str(raw.get("reasoning_effort", base.reasoning_effort)),
+            sandbox=str(raw.get("sandbox", base.sandbox)),
+            approval_policy=str(raw.get("approval_policy", base.approval_policy)),
+            search=bool(raw.get("search", base.search)),
+        )
     return merged
 
 
@@ -133,7 +145,6 @@ def load_config(root: Path) -> ProjectConfig:
         ),
         review=ReviewConfig(
             max_concurrency=int(review_data.get("max_concurrency", 4)),
-            dimensions=_as_tuple(review_data.get("dimensions"), DEFAULT_DIMENSIONS),
         ),
         safety=SafetyConfig(
             network_access=bool(safety_data.get("network_access", False)),
@@ -141,16 +152,38 @@ def load_config(root: Path) -> ProjectConfig:
                 safety_data.get("dangerous_approval_policy", "on-request")
             ),
         ),
-        profiles=_as_dict(data.get("profiles")),
+        agents=_as_agents(data.get("agents")),
     )
 
 
 def render_default_config() -> str:
-    return """[profiles]
-orchestrator = "orchestrator_readonly"
-generator = "generator_execute"
-evaluator = "evaluator"
-reviewer = "reviewer"
+    return """[agents.orchestrator]
+model = "gpt-5.4-mini"
+reasoning_effort = "low"
+sandbox = "read-only"
+approval_policy = "never"
+search = false
+
+[agents.generator]
+model = "gpt-5.3-codex"
+reasoning_effort = "medium"
+sandbox = "workspace-write"
+approval_policy = "on-request"
+search = false
+
+[agents.evaluator]
+model = "gpt-5.4"
+reasoning_effort = "medium"
+sandbox = "read-only"
+approval_policy = "never"
+search = false
+
+[agents.reviewer]
+model = "gpt-5.4-mini"
+reasoning_effort = "medium"
+sandbox = "read-only"
+approval_policy = "never"
+search = false
 
 [codex]
 binary = "codex"
@@ -167,7 +200,6 @@ check_timeout_seconds = 300
 
 [review]
 max_concurrency = 4
-dimensions = ["correctness", "regression-risk", "api-ux-contract"]
 
 [safety]
 network_access = false

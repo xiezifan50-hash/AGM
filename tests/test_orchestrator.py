@@ -97,13 +97,33 @@ def make_resolution(
 
 
 def make_review(review_id: str, scope_type: str, scope_id: str, pass_value: bool = True) -> dict:
+    score = 5 if pass_value else 2
     return {
         "review_id": review_id,
         "scope_type": scope_type,
         "scope_id": scope_id,
         "pass": pass_value,
         "severity": "low",
+        "score": score,
+        "score_reason_zh": "技术审查未发现阻断问题" if pass_value else "存在需要修复的技术问题",
+        "project_path": "/tmp/project",
+        "review_dimension_zh": "Feature 技术代码审查" if scope_type == "feature" else scope_id,
         "summary_zh": "检查通过" if pass_value else "发现问题",
+        "evidence_sections": [
+            {
+                "section_id": "evidence-1",
+                "title_zh": "基础证据",
+                "result": "pass" if pass_value else "fail",
+                "evidence_zh": "fixture 审查证据",
+                "references": [
+                    {
+                        "kind": "other",
+                        "target": "fixture",
+                        "detail_zh": "测试构造的 review verdict"
+                    }
+                ]
+            }
+        ],
         "findings": []
     }
 
@@ -213,6 +233,27 @@ class OrchestratorTests(WorkspaceTestCase):
         orchestrator.init_workspace()
         with self.assertRaises(ValueError):
             orchestrator.create_task("实现核心功能", "task-root", self.workspace)
+
+    def test_review_jobs_use_negotiated_dimensions_only(self) -> None:
+        contract = make_contract()
+        contract["review_dimensions"] = ["security-hardening"]
+        orchestrator = self.make_orchestrator({"steps": []})
+        orchestrator.init_workspace()
+        result = orchestrator.create_task("实现核心功能", "task-dimensions", self.workspace_path())
+        manifest = result["manifest"]
+        sprint = result["sprint"]
+        sprint["contract"]["accepted_contract"] = contract
+
+        orchestrator._prepare_reviews("task-dimensions", manifest, sprint)
+
+        state = orchestrator.status("task-dimensions")
+        self.assertEqual(
+            [
+                (job["scope_type"], job["scope_id"])
+                for job in state["sprint"]["reviews"]["review_jobs"]
+            ],
+            [("feature", "core"), ("dimension", "security-hardening")],
+        )
 
     def test_changed_files_are_limited_to_workspace(self) -> None:
         orchestrator = self.make_orchestrator({"steps": []})

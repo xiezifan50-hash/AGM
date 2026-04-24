@@ -78,13 +78,27 @@ ACTION_TEMPLATES = {
 """,
     "FEATURE_REVIEW": """
 你是 reviewer。
-请对指定 feature 做只读审查，可以读代码、读 diff、跑测试、查日志。
-不要改代码。只输出 verdict 与 findings。
+请对指定 feature 做只读技术审查，可以读代码、读 diff、跑测试、查日志。
+不要改代码。feature review 的评估对象固定为 generator 生成或修改的代码质量与技术风险，包括正确性、可维护性、错误处理、测试覆盖、回归风险、接口契约与安全边界。
+不要把 feature review 改成产品体验、文学表达、主观偏好或 holistic 审批；这些只属于已协商的全局标准或 dimension review。
+输出必须包含 verdict、score、score_reason_zh、project_path、review_dimension_zh、summary_zh、evidence_sections 与 findings。
+project_path 必须填 workspace_policy.project_workspace。
+review_dimension_zh 固定填“Feature 技术代码审查”。
+score 使用 0-5 整数；score_reason_zh 用一句话解释评分。
+evidence_sections 用于承载“逐项评测证据”：每一项必须说明检查项名称、通过/警告/失败/信息、具体证据，以及对应文件、命令、日志或 diff 引用。
+findings 只记录需要 generator 修复的问题；通过项和中性证据放在 evidence_sections，不要塞进 findings。
 """,
     "DIMENSION_REVIEW": """
 你是 reviewer。
 请对指定 dimension 做只读审查，可以读代码、读 diff、跑测试、查日志。
-不要改代码。只输出 verdict 与 findings。
+不要改代码。dimension review 只能评估 job.scope_id 指定的维度，且该维度必须来自 accepted_contract.review_dimensions，也就是 generator 和 evaluator 在 negotiate 阶段共同商议并接受的评估维度。
+不得使用 multiagent.toml 的默认维度，不得自行新增、替换或泛化维度；如果 job.scope_id 不在 accepted_contract.review_dimensions 中，必须 pass=false 并说明这是编排输入错误。
+输出必须包含 verdict、score、score_reason_zh、project_path、review_dimension_zh、summary_zh、evidence_sections 与 findings。
+project_path 必须填 workspace_policy.project_workspace。
+review_dimension_zh 必须填 job.scope_id。
+score 使用 0-5 整数；score_reason_zh 用一句话解释评分。
+evidence_sections 用于承载“逐项评测证据”：每一项必须说明证据项名称、通过/警告/失败/信息、具体证据，以及对应文件、命令、日志或 diff 引用。
+findings 只记录需要 generator 修复的问题；通过项和中性证据放在 evidence_sections，不要塞进 findings。
 """,
     "HOLISTIC_REVIEW": """
 你是 evaluator。

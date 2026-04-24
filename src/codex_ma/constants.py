@@ -53,17 +53,35 @@ ROLE_GENERATOR = "generator"
 ROLE_EVALUATOR = "evaluator"
 ROLE_REVIEWER = "reviewer"
 
-DEFAULT_DIMENSIONS = (
-    "correctness",
-    "regression-risk",
-    "api-ux-contract",
-)
-
-DEFAULT_ROLE_PROFILES = {
-    ROLE_ORCHESTRATOR: "orchestrator_readonly",
-    ROLE_GENERATOR: "generator_execute",
-    ROLE_EVALUATOR: "evaluator",
-    ROLE_REVIEWER: "reviewer",
+DEFAULT_ROLE_AGENTS = {
+    ROLE_ORCHESTRATOR: {
+        "model": "gpt-5.4-mini",
+        "reasoning_effort": "low",
+        "sandbox": "read-only",
+        "approval_policy": "never",
+        "search": False,
+    },
+    ROLE_GENERATOR: {
+        "model": "gpt-5.3-codex",
+        "reasoning_effort": "medium",
+        "sandbox": "workspace-write",
+        "approval_policy": "on-request",
+        "search": False,
+    },
+    ROLE_EVALUATOR: {
+        "model": "gpt-5.4",
+        "reasoning_effort": "medium",
+        "sandbox": "read-only",
+        "approval_policy": "never",
+        "search": False,
+    },
+    ROLE_REVIEWER: {
+        "model": "gpt-5.4-mini",
+        "reasoning_effort": "medium",
+        "sandbox": "read-only",
+        "approval_policy": "never",
+        "search": False,
+    },
 }
 
 OUTPUT_SCHEMAS = {

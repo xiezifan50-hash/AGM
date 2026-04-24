@@ -9,7 +9,7 @@ import re
 import subprocess
 import tempfile
 
-from codex_ma.config import ProjectConfig
+from codex_ma.config import AgentConfig, ProjectConfig
 from codex_ma.constants import (
     OUTPUT_SCHEMAS,
     PHASE_AWAITING_HUMAN,
@@ -484,7 +484,6 @@ class Orchestrator:
             schema_path=schema_path,
             output_path=output_path,
             cwd=workspace,
-            profile=self.config.profiles[role],
             logical_session=logical_session,
             session_id=session_info.get("session_id"),
         )
@@ -516,10 +515,17 @@ class Orchestrator:
         self._raise_if_not_runnable(task_id, manifest)
         validate(result.payload, load_schema(validation_schema_path))
         self._assert_payload_within_workspace(manifest, result.payload)
+        agent = self.config.agents.get(role, AgentConfig())
         with self._state_lock:
             manifest["agent_sessions"][logical_session] = {
                 "role": role,
-                "profile": self.config.profiles[role],
+                "agent_config": {
+                    "model": agent.model,
+                    "reasoning_effort": agent.reasoning_effort,
+                    "sandbox": agent.sandbox,
+                    "approval_policy": agent.approval_policy,
+                    "search": agent.search,
+                },
                 "session_id": result.session_id,
                 "scope": scope,
                 "last_used_at": now_iso(),
@@ -1334,7 +1340,35 @@ class Orchestrator:
                     "status": "queued",
                 }
             )
-        for dimension in accepted_contract.get("review_dimensions", self.config.review.dimensions):
+        raw_review_dimensions = accepted_contract.get("review_dimensions")
+        if not isinstance(raw_review_dimensions, list):
+            raw_review_dimensions = []
+        review_dimensions = [
+            str(dimension).strip()
+            for dimension in raw_review_dimensions
+            if str(dimension).strip()
+        ]
+        if not review_dimensions:
+            sprint["status"] = STATUS_BLOCKED
+            manifest["status"] = STATUS_BLOCKED
+            self._save_state(task_id, manifest, sprint)
+            self._emit_progress(
+                "Review 队列生成失败",
+                [
+                    "原因: accepted_contract.review_dimensions 为空。",
+                    "要求: dimension review 只能使用 generator 与 evaluator 已协商接受的评估维度。",
+                ],
+            )
+            self._append_event(
+                task_id,
+                sprint,
+                "TASK_BLOCKED",
+                "orchestrator",
+                "缺少已协商的 review_dimensions，无法生成 dimension review。",
+                {"accepted_contract_keys": sorted(accepted_contract.keys())},
+            )
+            return
+        for dimension in review_dimensions:
             review_jobs.append(
                 {
                     "review_id": f"dimension-{dimension}",
