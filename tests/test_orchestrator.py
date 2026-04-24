@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+import json
+
 from testlib import WorkspaceTestCase
 from codex_ma.orchestrator import WorkspaceViolation
-from codex_ma.runner import AgentTimeoutError, BaseRunner, RunnerRequest, RunnerResult
+from codex_ma.runner import (
+    AgentOutputError,
+    AgentTimeoutError,
+    BaseRunner,
+    RunnerError,
+    RunnerRequest,
+    RunnerResult,
+)
 
 
 class CallbackRunner(BaseRunner):
@@ -25,6 +34,37 @@ class TimeoutRunner(BaseRunner):
     def run(self, request: RunnerRequest) -> RunnerResult:
         raise AgentTimeoutError(
             f"Codex command timed out for action={request.action} role={request.role}"
+        )
+
+
+class SequenceRunner(BaseRunner):
+    def __init__(self, steps: list[dict]):
+        self.steps = list(steps)
+        self.requests: list[RunnerRequest] = []
+
+    def run(self, request: RunnerRequest) -> RunnerResult:
+        self.requests.append(request)
+        if not self.steps:
+            raise RunnerError("no remaining sequence steps")
+        step = self.steps.pop(0)
+        if "raise_output" in step:
+            raise AgentOutputError(
+                "invalid output",
+                raw_output=str(step["raise_output"]),
+                session_id=step.get("session_id", request.session_id),
+                command=["sequence-runner", request.run_mode],
+            )
+        if "raise" in step:
+            raise step["raise"]
+        payload = step["payload"]
+        request.output_path.parent.mkdir(parents=True, exist_ok=True)
+        raw_output = json.dumps(payload, ensure_ascii=False)
+        request.output_path.write_text(raw_output + "\n", encoding="utf-8")
+        return RunnerResult(
+            payload=payload,
+            session_id=step.get("session_id", request.session_id),
+            command=["sequence-runner", request.run_mode],
+            raw_output=raw_output,
         )
 
 
@@ -312,6 +352,160 @@ class OrchestratorTests(WorkspaceTestCase):
         self.assertEqual(result["sprint"]["status"], "blocked")
         events = orchestrator.events("task-timeout")
         self.assertEqual(events[-1]["event_type"], "AGENT_CALL_TIMED_OUT")
+
+    def test_agent_session_is_reused_within_same_sprint(self) -> None:
+        contract = make_contract()
+        runner = SequenceRunner(
+            [
+                {"payload": contract, "session_id": "gen-contract"},
+                {"payload": contract, "session_id": "gen-contract"},
+            ]
+        )
+        orchestrator = self.make_orchestrator()
+        orchestrator.init_workspace()
+        result = orchestrator.create_task("实现核心功能", "task-session", self.workspace_path())
+        orchestrator.runner = runner
+        manifest = result["manifest"]
+        sprint = result["sprint"]
+
+        for index in range(2):
+            orchestrator._invoke_agent(
+                task_id="task-session",
+                manifest=manifest,
+                sprint=sprint,
+                role="generator",
+                phase=sprint["phase"],
+                action="GENERATOR_PROPOSAL",
+                schema_key="contract_proposal",
+                logical_session="generator_contract",
+                artifact_name=f"proposal-{index}.json",
+                context={"user_request": sprint["user_request"]},
+                scope="contract",
+                notes_zh="测试 session 复用。",
+            )
+
+        self.assertEqual([request.run_mode for request in runner.requests], ["fresh", "resume"])
+        session = manifest["agent_sessions"]["generator_contract"]
+        self.assertEqual(session["session_id"], "gen-contract")
+        self.assertEqual(session["reuse_count"], 1)
+        self.assertFalse(session["degraded_to_fresh"])
+        event_types = [event["event_type"] for event in orchestrator.events("task-session")]
+        self.assertIn("AGENT_SESSION_RESUME_ATTEMPTED", event_types)
+        self.assertIn("AGENT_SESSION_REUSED", event_types)
+
+    def test_resume_invalid_output_is_normalized(self) -> None:
+        contract = make_contract()
+        normalized = make_contract("normalizer 规范化后的合同")
+        runner = SequenceRunner(
+            [
+                {"payload": contract, "session_id": "gen-contract"},
+                {"raise_output": "这不是 JSON", "session_id": "gen-contract"},
+                {"payload": normalized, "session_id": "normalizer-session"},
+            ]
+        )
+        orchestrator = self.make_orchestrator()
+        orchestrator.init_workspace()
+        result = orchestrator.create_task("实现核心功能", "task-normalize", self.workspace_path())
+        orchestrator.runner = runner
+        manifest = result["manifest"]
+        sprint = result["sprint"]
+
+        orchestrator._invoke_agent(
+            task_id="task-normalize",
+            manifest=manifest,
+            sprint=sprint,
+            role="generator",
+            phase=sprint["phase"],
+            action="GENERATOR_PROPOSAL",
+            schema_key="contract_proposal",
+            logical_session="generator_contract",
+            artifact_name="proposal-1.json",
+            context={"user_request": sprint["user_request"]},
+            scope="contract",
+            notes_zh="测试 session 复用。",
+        )
+        result = orchestrator._invoke_agent(
+            task_id="task-normalize",
+            manifest=manifest,
+            sprint=sprint,
+            role="generator",
+            phase=sprint["phase"],
+            action="GENERATOR_PROPOSAL",
+            schema_key="contract_proposal",
+            logical_session="generator_contract",
+            artifact_name="proposal-2.json",
+            context={"user_request": sprint["user_request"]},
+            scope="contract",
+            notes_zh="测试 session 复用。",
+        )
+
+        self.assertEqual(result.payload["summary_zh"], "normalizer 规范化后的合同")
+        self.assertEqual(
+            [request.run_mode for request in runner.requests],
+            ["fresh", "resume", "normalize"],
+        )
+        session = manifest["agent_sessions"]["generator_contract"]
+        self.assertEqual(session["session_id"], "gen-contract")
+        self.assertEqual(session["normalize_count"], 1)
+        self.assertEqual(session["resume_failure_count"], 1)
+        self.assertFalse(session["degraded_to_fresh"])
+        event_types = [event["event_type"] for event in orchestrator.events("task-normalize")]
+        self.assertIn("AGENT_SESSION_SCHEMA_FAILED", event_types)
+        self.assertIn("AGENT_RESUME_OUTPUT_NORMALIZED", event_types)
+        self.assertNotIn("AGENT_SESSION_FRESH_RETRY_SUCCEEDED", event_types)
+
+    def test_resume_failures_degrade_session_to_fresh(self) -> None:
+        (self.workspace / "multiagent.toml").write_text(
+            """[session]
+session_reuse_degrade_threshold = 1
+""",
+            encoding="utf-8",
+        )
+        contract = make_contract()
+        runner = SequenceRunner(
+            [
+                {"payload": contract, "session_id": "gen-contract"},
+                {"raise_output": "这不是 JSON", "session_id": "gen-contract"},
+                {"raise": RunnerError("normalizer failed")},
+                {"payload": contract, "session_id": "gen-fresh-retry"},
+                {"payload": contract, "session_id": "gen-fresh-after-degrade"},
+            ]
+        )
+        orchestrator = self.make_orchestrator()
+        orchestrator.init_workspace()
+        result = orchestrator.create_task("实现核心功能", "task-degrade", self.workspace_path())
+        orchestrator.runner = runner
+        manifest = result["manifest"]
+        sprint = result["sprint"]
+
+        for index in range(3):
+            orchestrator._invoke_agent(
+                task_id="task-degrade",
+                manifest=manifest,
+                sprint=sprint,
+                role="generator",
+                phase=sprint["phase"],
+                action="GENERATOR_PROPOSAL",
+                schema_key="contract_proposal",
+                logical_session="generator_contract",
+                artifact_name=f"proposal-{index}.json",
+                context={"user_request": sprint["user_request"]},
+                scope="contract",
+                notes_zh="测试 session 熔断。",
+            )
+
+        self.assertEqual(
+            [request.run_mode for request in runner.requests],
+            ["fresh", "resume", "normalize", "fresh", "fresh"],
+        )
+        session = manifest["agent_sessions"]["generator_contract"]
+        self.assertTrue(session["degraded_to_fresh"])
+        self.assertEqual(session["fresh_retry_count"], 1)
+        self.assertEqual(session["last_run_mode"], "fresh")
+        event_types = [event["event_type"] for event in orchestrator.events("task-degrade")]
+        self.assertIn("AGENT_SESSION_DEGRADED_TO_FRESH", event_types)
+        self.assertIn("AGENT_NORMALIZER_FAILED", event_types)
+        self.assertIn("AGENT_SESSION_FRESH_RETRY_SUCCEEDED", event_types)
 
     def test_full_run_reaches_done(self) -> None:
         contract = make_contract()

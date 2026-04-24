@@ -68,3 +68,40 @@ class RunnerTests(WorkspaceTestCase):
         self.assertIn("on-request", cmd)
         self.assertIn('model_reasoning_effort="medium"', cmd)
         self.assertIn("--search", cmd)
+
+    def test_codex_runner_resume_uses_session_without_output_schema(self) -> None:
+        config = ProjectConfig(
+            codex=CodexConfig(binary="/bin/echo"),
+            agents={
+                "generator": AgentConfig(
+                    model="gpt-5.3-codex",
+                    reasoning_effort="low",
+                    sandbox="workspace-write",
+                    approval_policy="on-request",
+                    search=True,
+                )
+            },
+        )
+        runner = CodexRunner(config)
+        request = RunnerRequest(
+            role="generator",
+            phase="NEGOTIATE_ROUND",
+            action="GENERATOR_PROPOSAL",
+            prompt="{}",
+            schema_path=Path("schema.json"),
+            output_path=self.workspace / "output.json",
+            cwd=self.workspace,
+            logical_session="generator_contract",
+            session_id="session-123",
+            run_mode="resume",
+        )
+
+        cmd = runner._build_command(request)
+
+        self.assertEqual(cmd[:3], ["/bin/echo", "exec", "resume"])
+        self.assertIn("session-123", cmd)
+        self.assertNotIn("--output-schema", cmd)
+        self.assertNotIn("-C", cmd)
+        self.assertNotIn("-s", cmd)
+        self.assertNotIn("-a", cmd)
+        self.assertIn('model_reasoning_effort="low"', cmd)

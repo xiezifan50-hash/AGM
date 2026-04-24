@@ -26,6 +26,13 @@ sandbox = "read-only"
 approval_policy = "never"
 search = false
 
+[agents.normalizer]
+model = "gpt-5.4-mini"
+reasoning_effort = "low"
+sandbox = "read-only"
+approval_policy = "never"
+search = false
+
 [codex]
 binary = "codex"
 search = false
@@ -41,6 +48,12 @@ check_timeout_seconds = 300
 
 [review]
 max_concurrency = 4
+
+[session]
+session_reuse_enabled = true
+normalizer_enabled = true
+session_reuse_mode = "sprint"
+session_reuse_degrade_threshold = 2
 
 [safety]
 network_access = false

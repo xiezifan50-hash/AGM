@@ -307,6 +307,9 @@
 ### 10.2 运行时回退
 
 - 单次 session resume 失败时，自动切 fresh exec，不阻断任务。
+- resume 输出无法解析或未通过目标 JSON Schema 时，先交给低成本 `normalizer` 角色使用 fresh exec + `--output-schema` 做保真规范化。
+- normalizer 只能做格式映射，不得改变业务结论、补充事实或替原 agent 重新判断。
+- normalizer 仍失败时，再降级到原业务角色 fresh exec。
 - 单个 `logical_session` 连续失败达到阈值后，标记本 sprint 内不再复用。
 - 降级信息写入 `agent_sessions` 与 `events.jsonl`。
 

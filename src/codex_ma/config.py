@@ -44,6 +44,14 @@ class ReviewConfig:
 
 
 @dataclass(slots=True)
+class SessionConfig:
+    session_reuse_enabled: bool = True
+    normalizer_enabled: bool = True
+    session_reuse_mode: str = "sprint"
+    session_reuse_degrade_threshold: int = 2
+
+
+@dataclass(slots=True)
 class SafetyConfig:
     network_access: bool = False
     dangerous_approval_policy: str = "on-request"
@@ -55,6 +63,7 @@ class ProjectConfig:
     negotiation: NegotiationConfig = field(default_factory=NegotiationConfig)
     implementation: ImplementationConfig = field(default_factory=ImplementationConfig)
     review: ReviewConfig = field(default_factory=ReviewConfig)
+    session: SessionConfig = field(default_factory=SessionConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
     agents: dict[str, AgentConfig] = field(default_factory=lambda: _default_agents())
 
@@ -126,6 +135,7 @@ def load_config(root: Path) -> ProjectConfig:
     negotiation_data = data.get("negotiation", {})
     implementation_data = data.get("implementation", {})
     review_data = data.get("review", {})
+    session_data = data.get("session", {})
     safety_data = data.get("safety", {})
     return ProjectConfig(
         codex=CodexConfig(
@@ -145,6 +155,18 @@ def load_config(root: Path) -> ProjectConfig:
         ),
         review=ReviewConfig(
             max_concurrency=int(review_data.get("max_concurrency", 4)),
+        ),
+        session=SessionConfig(
+            session_reuse_enabled=bool(
+                session_data.get("session_reuse_enabled", True)
+            ),
+            normalizer_enabled=bool(session_data.get("normalizer_enabled", True)),
+            session_reuse_mode=str(
+                session_data.get("session_reuse_mode", "sprint")
+            ),
+            session_reuse_degrade_threshold=int(
+                session_data.get("session_reuse_degrade_threshold", 2)
+            ),
         ),
         safety=SafetyConfig(
             network_access=bool(safety_data.get("network_access", False)),
@@ -185,6 +207,13 @@ sandbox = "read-only"
 approval_policy = "never"
 search = false
 
+[agents.normalizer]
+model = "gpt-5.4-mini"
+reasoning_effort = "low"
+sandbox = "read-only"
+approval_policy = "never"
+search = false
+
 [codex]
 binary = "codex"
 search = false
@@ -200,6 +229,12 @@ check_timeout_seconds = 300
 
 [review]
 max_concurrency = 4
+
+[session]
+session_reuse_enabled = true
+normalizer_enabled = true
+session_reuse_mode = "sprint"
+session_reuse_degrade_threshold = 2
 
 [safety]
 network_access = false

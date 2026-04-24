@@ -28,6 +28,7 @@ from codex_ma.constants import (
     PHASE_REVIEW_PREP,
     ROLE_EVALUATOR,
     ROLE_GENERATOR,
+    ROLE_NORMALIZER,
     ROLE_REVIEWER,
     STATUS_ABORTED,
     STATUS_BLOCKED,
@@ -36,9 +37,16 @@ from codex_ma.constants import (
     STATUS_IN_PROGRESS,
     STATUS_PAUSED,
 )
-from codex_ma.prompts import build_prompt
-from codex_ma.runner import AgentTimeoutError, BaseRunner, RunnerError, RunnerRequest, RunnerResult
-from codex_ma.schema import load_schema, validate
+from codex_ma.prompts import build_normalizer_prompt, build_prompt
+from codex_ma.runner import (
+    AgentOutputError,
+    AgentTimeoutError,
+    BaseRunner,
+    RunnerError,
+    RunnerRequest,
+    RunnerResult,
+)
+from codex_ma.schema import SchemaValidationError, load_schema, validate
 from codex_ma.state import (
     build_holistic_rubric,
     build_initial_manifest,
@@ -437,6 +445,392 @@ class Orchestrator:
         }
         self.storage.append_event(task_id, event)
 
+    def _can_reuse_session(self, session_info: dict[str, Any], sprint: dict[str, Any]) -> bool:
+        if not self.config.session.session_reuse_enabled:
+            return False
+        if self.config.session.session_reuse_mode != "sprint":
+            return False
+        if session_info.get("degraded_to_fresh"):
+            return False
+        if not session_info.get("session_id"):
+            return False
+        return session_info.get("sprint_number") == sprint["sprint_number"]
+
+    def _run_agent_with_reuse(
+        self,
+        *,
+        task_id: str,
+        manifest: dict[str, Any],
+        sprint: dict[str, Any],
+        request: RunnerRequest,
+        validation_schema_path: Path,
+        output_path: Path,
+        schema_key: str,
+        session_info: dict[str, Any],
+    ) -> tuple[RunnerResult, dict[str, Any]]:
+        validation_schema = load_schema(validation_schema_path)
+        if request.run_mode != "resume":
+            result = self.runner.run(request)
+            self._raise_if_not_runnable(task_id, manifest)
+            self._validate_agent_result(manifest, result, validation_schema)
+            return result, self._build_session_update(session_info, run_mode="fresh")
+
+        self._append_event(
+            task_id,
+            sprint,
+            "AGENT_SESSION_RESUME_ATTEMPTED",
+            request.role,
+            f"{request.role} 尝试复用 {request.logical_session}。",
+            {
+                "action": request.action,
+                "logical_session": request.logical_session,
+                "session_id": request.session_id,
+            },
+        )
+        try:
+            result = self.runner.run(request)
+            self._raise_if_not_runnable(task_id, manifest)
+            try:
+                self._validate_agent_result(manifest, result, validation_schema)
+            except SchemaValidationError as exc:
+                return self._handle_resume_output_failure(
+                    task_id=task_id,
+                    manifest=manifest,
+                    sprint=sprint,
+                    request=request,
+                    validation_schema=validation_schema,
+                    output_path=output_path,
+                    schema_key=schema_key,
+                    session_info=session_info,
+                    raw_output=result.raw_output,
+                    resume_session_id=result.session_id,
+                    error=exc,
+                )
+        except AgentOutputError as exc:
+            self._raise_if_not_runnable(task_id, manifest)
+            return self._handle_resume_output_failure(
+                task_id=task_id,
+                manifest=manifest,
+                sprint=sprint,
+                request=request,
+                validation_schema=validation_schema,
+                output_path=output_path,
+                schema_key=schema_key,
+                session_info=session_info,
+                raw_output=exc.raw_output,
+                resume_session_id=exc.session_id or request.session_id,
+                error=exc,
+            )
+        except RunnerError as exc:
+            self._raise_if_not_runnable(task_id, manifest)
+            self._append_event(
+                task_id,
+                sprint,
+                "AGENT_SESSION_RESUME_FAILED",
+                request.role,
+                f"{request.role} 复用 {request.logical_session} 失败，降级 fresh exec。",
+                {
+                    "action": request.action,
+                    "logical_session": request.logical_session,
+                    "session_id": request.session_id,
+                    "error": str(exc),
+                },
+            )
+            failure_count, degraded = self._next_resume_failure(session_info)
+            self._append_degraded_event_if_needed(
+                task_id, sprint, request, session_info, degraded
+            )
+            return self._run_fresh_retry(
+                task_id=task_id,
+                manifest=manifest,
+                sprint=sprint,
+                request=request,
+                validation_schema=validation_schema,
+                session_info=session_info,
+                failure_count=failure_count,
+                degraded=degraded,
+                error=exc,
+            )
+
+        self._append_event(
+            task_id,
+            sprint,
+            "AGENT_SESSION_REUSED",
+            request.role,
+            f"{request.role} 已复用 {request.logical_session}。",
+            {
+                "action": request.action,
+                "logical_session": request.logical_session,
+                "session_id": result.session_id,
+            },
+        )
+        return result, self._build_session_update(
+            session_info,
+            run_mode="resume",
+            resume_failure_count=0,
+            degraded=False,
+        )
+
+    def _validate_agent_result(
+        self,
+        manifest: dict[str, Any],
+        result: RunnerResult,
+        validation_schema: dict[str, Any],
+    ) -> None:
+        validate(result.payload, validation_schema)
+        self._assert_payload_within_workspace(manifest, result.payload)
+
+    def _handle_resume_output_failure(
+        self,
+        *,
+        task_id: str,
+        manifest: dict[str, Any],
+        sprint: dict[str, Any],
+        request: RunnerRequest,
+        validation_schema: dict[str, Any],
+        output_path: Path,
+        schema_key: str,
+        session_info: dict[str, Any],
+        raw_output: str,
+        resume_session_id: str | None,
+        error: Exception,
+    ) -> tuple[RunnerResult, dict[str, Any]]:
+        failure_count, degraded = self._next_resume_failure(session_info)
+        self._append_event(
+            task_id,
+            sprint,
+            "AGENT_SESSION_SCHEMA_FAILED",
+            request.role,
+            f"{request.role} 复用输出未通过 schema，"
+            + ("尝试 normalizer。" if self.config.session.normalizer_enabled else "降级 fresh exec。"),
+            {
+                "action": request.action,
+                "logical_session": request.logical_session,
+                "session_id": resume_session_id,
+                "schema_key": schema_key,
+                "error": str(error),
+            },
+        )
+        self._append_degraded_event_if_needed(task_id, sprint, request, session_info, degraded)
+        if self.config.session.normalizer_enabled:
+            try:
+                normalized = self._normalize_resume_output(
+                    task_id=task_id,
+                    manifest=manifest,
+                    sprint=sprint,
+                    request=request,
+                    validation_schema=validation_schema,
+                    output_path=output_path,
+                    schema_key=schema_key,
+                    raw_output=raw_output,
+                    resume_session_id=resume_session_id,
+                    validation_error=error,
+                )
+                return normalized, self._build_session_update(
+                    session_info,
+                    run_mode="normalized_resume",
+                    resume_failure_count=failure_count,
+                    degraded=degraded,
+                    error=str(error),
+                )
+            except (RunnerError, SchemaValidationError) as normalizer_error:
+                self._raise_if_not_runnable(task_id, manifest)
+                self._append_event(
+                    task_id,
+                    sprint,
+                    "AGENT_NORMALIZER_FAILED",
+                    ROLE_NORMALIZER,
+                    "Normalizer 未能规范化 resume 输出，降级 fresh exec。",
+                    {
+                        "source_action": request.action,
+                        "logical_session": request.logical_session,
+                        "schema_key": schema_key,
+                        "error": str(normalizer_error),
+                    },
+                )
+                error = normalizer_error
+        return self._run_fresh_retry(
+            task_id=task_id,
+            manifest=manifest,
+            sprint=sprint,
+            request=request,
+            validation_schema=validation_schema,
+            session_info=session_info,
+            failure_count=failure_count,
+            degraded=degraded,
+            error=error,
+        )
+
+    def _normalize_resume_output(
+        self,
+        *,
+        task_id: str,
+        manifest: dict[str, Any],
+        sprint: dict[str, Any],
+        request: RunnerRequest,
+        validation_schema: dict[str, Any],
+        output_path: Path,
+        schema_key: str,
+        raw_output: str,
+        resume_session_id: str | None,
+        validation_error: Exception,
+    ) -> RunnerResult:
+        normalizer_output_path = output_path.with_name(f"normalized-{output_path.name}")
+        normalizer_request = RunnerRequest(
+            role=ROLE_NORMALIZER,
+            phase=request.phase,
+            action="NORMALIZE_AGENT_OUTPUT",
+            prompt=build_normalizer_prompt(
+                {
+                    "source_role": request.role,
+                    "source_action": request.action,
+                    "source_logical_session": request.logical_session,
+                    "target_schema_key": schema_key,
+                    "validation_error": str(validation_error),
+                    "raw_agent_output": raw_output,
+                }
+            ),
+            schema_path=request.schema_path,
+            output_path=normalizer_output_path,
+            cwd=request.cwd,
+            logical_session=f"normalizer_{request.logical_session}",
+            run_mode="normalize",
+        )
+        normalizer_result = self.runner.run(normalizer_request)
+        self._raise_if_not_runnable(task_id, manifest)
+        self._validate_agent_result(manifest, normalizer_result, validation_schema)
+        self._append_event(
+            task_id,
+            sprint,
+            "AGENT_RESUME_OUTPUT_NORMALIZED",
+            ROLE_NORMALIZER,
+            "Normalizer 已将 resume 输出规范化为目标 schema。",
+            {
+                "source_action": request.action,
+                "logical_session": request.logical_session,
+                "schema_key": schema_key,
+                "artifact": self._workspace_relative(manifest, normalizer_output_path),
+                "command": normalizer_result.command,
+            },
+        )
+        return RunnerResult(
+            payload=normalizer_result.payload,
+            session_id=resume_session_id,
+            raw_events=normalizer_result.raw_events,
+            command=normalizer_result.command,
+            raw_output=normalizer_result.raw_output,
+        )
+
+    def _run_fresh_retry(
+        self,
+        *,
+        task_id: str,
+        manifest: dict[str, Any],
+        sprint: dict[str, Any],
+        request: RunnerRequest,
+        validation_schema: dict[str, Any],
+        session_info: dict[str, Any],
+        failure_count: int,
+        degraded: bool,
+        error: Exception,
+    ) -> tuple[RunnerResult, dict[str, Any]]:
+        fresh_request = RunnerRequest(
+            role=request.role,
+            phase=request.phase,
+            action=request.action,
+            prompt=request.prompt,
+            schema_path=request.schema_path,
+            output_path=request.output_path,
+            cwd=request.cwd,
+            logical_session=request.logical_session,
+            run_mode="fresh",
+        )
+        result = self.runner.run(fresh_request)
+        self._raise_if_not_runnable(task_id, manifest)
+        self._validate_agent_result(manifest, result, validation_schema)
+        self._append_event(
+            task_id,
+            sprint,
+            "AGENT_SESSION_FRESH_RETRY_SUCCEEDED",
+            request.role,
+            f"{request.role} 已通过 fresh exec 完成 {request.action}。",
+            {
+                "action": request.action,
+                "logical_session": request.logical_session,
+                "new_session_id": result.session_id,
+                "previous_error": str(error),
+            },
+        )
+        return result, self._build_session_update(
+            session_info,
+            run_mode="fresh_retry",
+            resume_failure_count=failure_count,
+            degraded=degraded,
+            error=str(error),
+        )
+
+    def _next_resume_failure(self, session_info: dict[str, Any]) -> tuple[int, bool]:
+        failure_count = int(session_info.get("resume_failure_count", 0)) + 1
+        threshold = max(1, self.config.session.session_reuse_degrade_threshold)
+        degraded = bool(session_info.get("degraded_to_fresh")) or failure_count >= threshold
+        return failure_count, degraded
+
+    def _append_degraded_event_if_needed(
+        self,
+        task_id: str,
+        sprint: dict[str, Any],
+        request: RunnerRequest,
+        session_info: dict[str, Any],
+        degraded: bool,
+    ) -> None:
+        if not degraded or session_info.get("degraded_to_fresh"):
+            return
+        self._append_event(
+            task_id,
+            sprint,
+            "AGENT_SESSION_DEGRADED_TO_FRESH",
+            request.role,
+            f"{request.logical_session} 已熔断，本 Sprint 后续使用 fresh exec。",
+            {
+                "action": request.action,
+                "logical_session": request.logical_session,
+                "session_id": request.session_id,
+            },
+        )
+
+    def _build_session_update(
+        self,
+        session_info: dict[str, Any],
+        *,
+        run_mode: str,
+        resume_failure_count: int | None = None,
+        degraded: bool | None = None,
+        error: str = "",
+    ) -> dict[str, Any]:
+        reuse_count = int(session_info.get("reuse_count", 0))
+        normalize_count = int(session_info.get("normalize_count", 0))
+        fresh_retry_count = int(session_info.get("fresh_retry_count", 0))
+        if run_mode in {"resume", "normalized_resume"}:
+            reuse_count += 1
+        if run_mode == "normalized_resume":
+            normalize_count += 1
+        if run_mode == "fresh_retry":
+            fresh_retry_count += 1
+        if resume_failure_count is None:
+            resume_failure_count = int(session_info.get("resume_failure_count", 0))
+        if degraded is None:
+            degraded = bool(session_info.get("degraded_to_fresh", False))
+        return {
+            "status": "degraded_to_fresh" if degraded else "active",
+            "last_run_mode": run_mode,
+            "reuse_count": reuse_count,
+            "normalize_count": normalize_count,
+            "fresh_retry_count": fresh_retry_count,
+            "resume_failure_count": resume_failure_count,
+            "degraded_to_fresh": degraded,
+            "last_error": error,
+        }
+
     def _invoke_agent(
         self,
         *,
@@ -476,6 +870,7 @@ class Orchestrator:
             },
         )
         session_info = manifest["agent_sessions"].get(logical_session, {})
+        run_mode = "resume" if self._can_reuse_session(session_info, sprint) else "fresh"
         request = RunnerRequest(
             role=role,
             phase=phase,
@@ -486,9 +881,20 @@ class Orchestrator:
             cwd=workspace,
             logical_session=logical_session,
             session_id=session_info.get("session_id"),
+            run_mode=run_mode,
         )
+        session_update: dict[str, Any] = {}
         try:
-            result = self.runner.run(request)
+            result, session_update = self._run_agent_with_reuse(
+                task_id=task_id,
+                manifest=manifest,
+                sprint=sprint,
+                request=request,
+                validation_schema_path=validation_schema_path,
+                output_path=output_path,
+                schema_key=schema_key,
+                session_info=session_info,
+            )
         except AgentTimeoutError as exc:
             sprint["status"] = STATUS_BLOCKED
             manifest["status"] = STATUS_BLOCKED
@@ -513,12 +919,11 @@ class Orchestrator:
             )
             raise
         self._raise_if_not_runnable(task_id, manifest)
-        validate(result.payload, load_schema(validation_schema_path))
-        self._assert_payload_within_workspace(manifest, result.payload)
         agent = self.config.agents.get(role, AgentConfig())
         with self._state_lock:
             manifest["agent_sessions"][logical_session] = {
                 "role": role,
+                "sprint_number": sprint["sprint_number"],
                 "agent_config": {
                     "model": agent.model,
                     "reasoning_effort": agent.reasoning_effort,
@@ -529,7 +934,9 @@ class Orchestrator:
                 "session_id": result.session_id,
                 "scope": scope,
                 "last_used_at": now_iso(),
+                "last_action": action,
                 "notes_zh": notes_zh,
+                **session_update,
             }
             self._append_event(
                 task_id,

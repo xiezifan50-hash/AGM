@@ -37,6 +37,23 @@ def build_prompt(role: str, action: str, context: dict[str, Any]) -> str:
     )
 
 
+def build_normalizer_prompt(context: dict[str, Any]) -> str:
+    return "\n\n".join(
+        [
+            """你是 Codex 多 Agent Sprint 系统中的 JSON Schema normalizer。
+所有自然语言字段必须使用简体中文。
+你的任务只是在不改变业务含义的前提下，把 raw_agent_output 保真转换为目标 JSON Schema。
+不得新增事实，不得改变 pass/fail 结论，不得替原 agent 做业务判断。
+如果必填字段无法从原文确定，使用 schema 允许的最保守空值，例如空字符串、空数组或 false。
+严格输出符合给定 JSON Schema 的 JSON。
+不要输出 Markdown。
+不要输出额外解释。""".strip(),
+            "上下文如下：",
+            _json_context(context),
+        ]
+    )
+
+
 ACTION_TEMPLATES = {
     "GENERATOR_RESEARCH": """
 你是 generator。

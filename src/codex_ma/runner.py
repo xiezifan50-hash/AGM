@@ -20,6 +20,23 @@ class AgentTimeoutError(RunnerError):
     pass
 
 
+class AgentOutputError(RunnerError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        raw_output: str = "",
+        session_id: str | None = None,
+        raw_events: list[dict[str, Any]] | None = None,
+        command: list[str] | None = None,
+    ):
+        super().__init__(message)
+        self.raw_output = raw_output
+        self.session_id = session_id
+        self.raw_events = raw_events or []
+        self.command = command or []
+
+
 @dataclass(slots=True)
 class RunnerRequest:
     role: str
@@ -31,6 +48,7 @@ class RunnerRequest:
     cwd: Path
     logical_session: str
     session_id: str | None = None
+    run_mode: str = "fresh"
 
 
 @dataclass(slots=True)
@@ -39,6 +57,7 @@ class RunnerResult:
     session_id: str | None
     raw_events: list[dict[str, Any]] = field(default_factory=list)
     command: list[str] = field(default_factory=list)
+    raw_output: str = ""
 
 
 class BaseRunner:
@@ -76,6 +95,7 @@ class FixtureRunner(BaseRunner):
                         session_id=step.get("session_id"),
                         raw_events=step.get("events", []),
                         command=["fixture-runner", request.action],
+                        raw_output=json.dumps(payload, ensure_ascii=False),
                     )
         raise RunnerError(
             f"Fixture runner has no remaining step for role={request.role} action={request.action}"
@@ -103,33 +123,50 @@ class CodexRunner(BaseRunner):
                 f"Codex command timed out after {self.config.codex.agent_timeout_seconds}s "
                 f"for action={request.action} role={request.role}"
             ) from exc
+        raw_events = _parse_jsonl(proc.stdout)
+        session_id = _extract_session_id(raw_events) or request.session_id
         if proc.returncode != 0:
             raise RunnerError(
                 f"Codex command failed with exit code {proc.returncode}: {proc.stderr.strip() or proc.stdout.strip()}"
             )
         if not request.output_path.exists():
-            raise RunnerError("Codex command finished without writing output file")
+            raise AgentOutputError(
+                "Codex command finished without writing output file",
+                raw_output=proc.stdout.strip() or proc.stderr.strip(),
+                session_id=session_id,
+                raw_events=raw_events,
+                command=cmd,
+            )
+        raw_output = request.output_path.read_text(encoding="utf-8")
         try:
-            payload = json.loads(request.output_path.read_text(encoding="utf-8"))
+            payload = json.loads(raw_output)
         except json.JSONDecodeError as exc:
-            raise RunnerError(f"Invalid JSON output from Codex: {exc}") from exc
-        raw_events = _parse_jsonl(proc.stdout)
-        session_id = _extract_session_id(raw_events) or request.session_id
+            raise AgentOutputError(
+                f"Invalid JSON output from Codex: {exc}",
+                raw_output=raw_output,
+                session_id=session_id,
+                raw_events=raw_events,
+                command=cmd,
+            ) from exc
         return RunnerResult(
             payload=payload,
             session_id=session_id,
             raw_events=raw_events,
             command=cmd,
+            raw_output=raw_output,
         )
 
     def _build_command(self, request: RunnerRequest) -> list[str]:
+        if request.run_mode == "resume":
+            return self._build_resume_command(request)
+        if request.run_mode in {"fresh", "normalize"}:
+            return self._build_fresh_command(request)
+        raise RunnerError(f"Unsupported runner mode: {request.run_mode}")
+
+    def _build_fresh_command(self, request: RunnerRequest) -> list[str]:
         binary = resolve_codex_binary(self.config.codex.binary)
         if not binary:
             raise RunnerError("未找到 Codex CLI，可在 multiagent.toml 的 [codex].binary 中配置绝对路径")
-        # `codex exec resume` currently does not support the same option set as
-        # fresh `codex exec` runs, notably `--output-schema`. The orchestrator
-        # already injects all durable context from sprint state, so v1 keeps
-        # calls schema-safe by starting a fresh non-interactive exec per phase.
         cmd = [binary, "exec", "-C", str(request.cwd)]
         agent = self.config.agents.get(request.role, AgentConfig())
         cmd.extend(self._agent_flags(agent))
@@ -149,6 +186,21 @@ class CodexRunner(BaseRunner):
         cmd.append("-")
         return cmd
 
+    def _build_resume_command(self, request: RunnerRequest) -> list[str]:
+        binary = resolve_codex_binary(self.config.codex.binary)
+        if not binary:
+            raise RunnerError("未找到 Codex CLI，可在 multiagent.toml 的 [codex].binary 中配置绝对路径")
+        if not request.session_id:
+            raise RunnerError("resume mode requires a session_id")
+        cmd = [binary, "exec", "resume"]
+        agent = self.config.agents.get(request.role, AgentConfig())
+        cmd.extend(self._resume_agent_flags(agent))
+        cmd.extend(["--json", "-o", str(request.output_path)])
+        if self.config.codex.skip_git_repo_check:
+            cmd.append("--skip-git-repo-check")
+        cmd.extend([request.session_id, "-"])
+        return cmd
+
     def _agent_flags(self, agent: AgentConfig) -> list[str]:
         flags: list[str] = []
         if agent.model:
@@ -157,6 +209,19 @@ class CodexRunner(BaseRunner):
             flags.extend(["-s", agent.sandbox])
         if agent.approval_policy:
             flags.extend(["-a", agent.approval_policy])
+        if agent.reasoning_effort:
+            flags.extend(
+                [
+                    "-c",
+                    f'model_reasoning_effort="{_toml_string(agent.reasoning_effort)}"',
+                ]
+            )
+        return flags
+
+    def _resume_agent_flags(self, agent: AgentConfig) -> list[str]:
+        flags: list[str] = []
+        if agent.model:
+            flags.extend(["-m", agent.model])
         if agent.reasoning_effort:
             flags.extend(
                 [

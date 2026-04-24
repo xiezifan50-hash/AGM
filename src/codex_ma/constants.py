@@ -52,6 +52,7 @@ ROLE_ORCHESTRATOR = "orchestrator"
 ROLE_GENERATOR = "generator"
 ROLE_EVALUATOR = "evaluator"
 ROLE_REVIEWER = "reviewer"
+ROLE_NORMALIZER = "normalizer"
 
 DEFAULT_ROLE_AGENTS = {
     ROLE_ORCHESTRATOR: {
@@ -78,6 +79,13 @@ DEFAULT_ROLE_AGENTS = {
     ROLE_REVIEWER: {
         "model": "gpt-5.4-mini",
         "reasoning_effort": "medium",
+        "sandbox": "read-only",
+        "approval_policy": "never",
+        "search": False,
+    },
+    ROLE_NORMALIZER: {
+        "model": "gpt-5.4-mini",
+        "reasoning_effort": "low",
         "sandbox": "read-only",
         "approval_policy": "never",
         "search": False,

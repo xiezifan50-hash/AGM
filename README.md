@@ -96,7 +96,7 @@ python3 -m codex_ma status task-001
 
 关键配置项：
 
-- `[agents.<role>]`：为 `orchestrator`、`generator`、`evaluator`、`reviewer` 直接指定项目级 Codex agent 配置，包括 `model`、`reasoning_effort`、`sandbox`、`approval_policy` 和 `search`。运行时不再依赖全局 `~/.codex/config.toml` 里的 profile。
+- `[agents.<role>]`：为 `orchestrator`、`generator`、`evaluator`、`reviewer`、`normalizer` 直接指定项目级 Codex agent 配置，包括 `model`、`reasoning_effort`、`sandbox`、`approval_policy` 和 `search`。运行时不再依赖全局 `~/.codex/config.toml` 里的 profile。
 - `[codex].binary`：Codex CLI 路径，默认 `codex`。
 - `[codex].search`：是否允许 Codex CLI 使用搜索。
 - `[codex].agent_timeout_seconds`：单次 `codex exec` agent 调用超时时间，默认 900 秒。
@@ -104,9 +104,10 @@ python3 -m codex_ma status task-001
 - `[implementation].l1_retry_limit`：L1 检查失败后的最大重试次数。
 - `[implementation].check_timeout_seconds`：L1 shell 检查超时时间。
 - `[review].max_concurrency`：并行 review 最大并发数。
+- `[session]`：控制 Sprint 内 `logical_session` 复用、resume 输出 normalizer 规范化，以及失败阈值后的 fresh exec 熔断。
 - `[safety]`：网络访问和危险操作审批策略。
 
-默认 agent 档位按效果与额度消耗做分层：`generator` 使用 `gpt-5.3-codex` + `medium` reasoning 负责真实代码修改；`evaluator` 使用 `gpt-5.4` + `medium` reasoning 负责合同与整体验收；`reviewer` 使用 `gpt-5.4-mini` + `medium` reasoning 支撑并行审查；`orchestrator` 使用 `gpt-5.4-mini` + `low` reasoning 处理轻量编排判断。默认 `search = false`，只在任务确实需要联网调研时按角色开启。
+默认 agent 档位按效果与额度消耗做分层：`generator` 使用 `gpt-5.3-codex` + `medium` reasoning 负责真实代码修改；`evaluator` 使用 `gpt-5.4` + `medium` reasoning 负责合同与整体验收；`reviewer` 使用 `gpt-5.4-mini` + `medium` reasoning 支撑并行审查；`orchestrator` 和 `normalizer` 使用 `gpt-5.4-mini` + `low` reasoning 处理轻量编排与 schema 规范化。默认 `search = false`，只在任务确实需要联网调研时按角色开启。
 
 ## 数据与产物
 
