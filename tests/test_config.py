@@ -12,7 +12,10 @@ class ConfigTests(WorkspaceTestCase):
         self.assertEqual(config.codex.agent_timeout_seconds, 900)
         self.assertEqual(config.agents["generator"].model, "gpt-5.3-codex")
         self.assertEqual(config.agents["generator"].sandbox, "workspace-write")
+        self.assertTrue(config.agents["generator"].search)
+        self.assertTrue(config.agents["evaluator"].search)
         self.assertEqual(config.agents["reviewer"].model, "gpt-5.4-mini")
+        self.assertTrue(config.agents["reviewer"].search)
 
     def test_codex_agent_timeout_can_be_configured(self) -> None:
         (self.workspace / "multiagent.toml").write_text(

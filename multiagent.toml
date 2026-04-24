@@ -10,21 +10,21 @@ model = "gpt-5.3-codex"
 reasoning_effort = "medium"
 sandbox = "workspace-write"
 approval_policy = "on-request"
-search = false
+search = true
 
 [agents.evaluator]
 model = "gpt-5.4"
 reasoning_effort = "medium"
 sandbox = "read-only"
 approval_policy = "never"
-search = false
+search = true
 
 [agents.reviewer]
 model = "gpt-5.4-mini"
 reasoning_effort = "medium"
 sandbox = "read-only"
 approval_policy = "never"
-search = false
+search = true
 
 [codex]
 binary = "codex"

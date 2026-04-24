@@ -106,7 +106,7 @@ python3 -m codex_ma status task-001
 - `[review].max_concurrency`：并行 review 最大并发数。
 - `[safety]`：网络访问和危险操作审批策略。
 
-默认 agent 档位按效果与额度消耗做分层：`generator` 使用 `gpt-5.3-codex` + `medium` reasoning 负责真实代码修改；`evaluator` 使用 `gpt-5.4` + `medium` reasoning 负责合同与整体验收；`reviewer` 使用 `gpt-5.4-mini` + `medium` reasoning 支撑并行审查；`orchestrator` 使用 `gpt-5.4-mini` + `low` reasoning 处理轻量编排判断。默认 `search = false`，只在任务确实需要联网调研时按角色开启。
+默认 agent 档位按效果与额度消耗做分层：`generator` 使用 `gpt-5.3-codex` + `medium` reasoning 负责真实代码修改；`evaluator` 使用 `gpt-5.4` + `medium` reasoning 负责合同与整体验收；`reviewer` 使用 `gpt-5.4-mini` + `medium` reasoning 支撑并行审查；`orchestrator` 使用 `gpt-5.4-mini` + `low` reasoning 处理轻量编排判断。默认 `generator`、`evaluator`、`reviewer` 开启 `search`，`orchestrator` 保持关闭。
 
 ## 数据与产物
 
