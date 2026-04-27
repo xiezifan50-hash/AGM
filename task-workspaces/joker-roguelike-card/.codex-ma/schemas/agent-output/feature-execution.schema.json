@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Feature Execution Output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "summary_zh",
+    "research_summary_zh",
+    "execution_summary_zh",
+    "status",
+    "changed_files",
+    "blockers_zh"
+  ],
+  "properties": {
+    "summary_zh": { "type": "string" },
+    "research_summary_zh": { "type": "string" },
+    "execution_summary_zh": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["in_progress", "l1_failed", "passed", "blocked"]
+    },
+    "changed_files": { "type": "array", "items": { "type": "string" } },
+    "blockers_zh": { "type": "array", "items": { "type": "string" } }
+  }
+}

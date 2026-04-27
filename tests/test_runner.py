@@ -63,11 +63,11 @@ class RunnerTests(WorkspaceTestCase):
         cmd = runner._build_command(request)
 
         self.assertNotIn("-p", cmd)
+        self.assertNotIn("-a", cmd)
         self.assertIn("gpt-5.3-codex", cmd)
         self.assertIn("workspace-write", cmd)
-        self.assertIn("on-request", cmd)
         self.assertIn('model_reasoning_effort="medium"', cmd)
-        self.assertIn("--search", cmd)
+        self.assertNotIn("--search", cmd)
 
     def test_codex_runner_resume_uses_session_without_output_schema(self) -> None:
         config = ProjectConfig(

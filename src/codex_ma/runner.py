@@ -179,8 +179,6 @@ class CodexRunner(BaseRunner):
                 str(request.output_path),
             ]
         )
-        if self.config.codex.search or agent.search:
-            cmd.append("--search")
         if self.config.codex.skip_git_repo_check:
             cmd.append("--skip-git-repo-check")
         cmd.append("-")
@@ -207,8 +205,6 @@ class CodexRunner(BaseRunner):
             flags.extend(["-m", agent.model])
         if agent.sandbox:
             flags.extend(["-s", agent.sandbox])
-        if agent.approval_policy:
-            flags.extend(["-a", agent.approval_policy])
         if agent.reasoning_effort:
             flags.extend(
                 [
